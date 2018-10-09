@@ -31,7 +31,7 @@ fn is_valid_frame<T>(buf: & BytesMut, data_size: usize, last_valid_offset: usize
     let second_data_size_index = data_size + size_of::<u32>();
     let filesize_index = data_size + size_of::<u32>() * 2;
 
-    let second_data_size = (&buf[second_data_size_index..]).read_uint::<BigEndian>(size_of::<u32>()).unwrap() as usize;
+    let second_data_size = (&buf[second_data_size_index..]).read_u32::<BigEndian>().unwrap() as usize;
     let file_size = (&buf[filesize_index..]).read_uint::<BigEndian>(size_of::<T>()).unwrap() as usize;
 
     let next_offset = last_valid_offset + size_of_framing_bytes::<T>() + data_size as usize;
@@ -47,7 +47,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
         if buf.len() < size_of::<u32>() {
             return Ok(None)
         }
-        let data_size = (&buf[..]).read_uint::<BigEndian>(size_of::<u32>()).unwrap() as usize;
+        let data_size = (&buf[..]).read_u32::<BigEndian>().unwrap() as usize;
 
         if buf.len() < data_size + size_of_framing_bytes::<ByteType>() {
             return Ok(None)
