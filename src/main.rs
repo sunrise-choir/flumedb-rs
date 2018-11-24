@@ -11,7 +11,7 @@ extern crate bytes;
 extern crate byteorder;
 extern crate flumedb;
 
-use flumedb::offset_log::*;
+//use flumedb::offset_log::*;
 use tokio_io::codec::FramedRead;
 use tokio::fs::File;
 use tokio::runtime::Runtime;

@@ -1,6 +1,10 @@
 # Flumedb-rs
 
-## 
+## Resync
+
+- Mikey asserted that the abstraction is a good one.
+  - An append only log.
+  - Multiple materialized views of the log.
 
 ## Braindump
 
@@ -10,7 +14,7 @@
   - What does it do across streams?
   - If we take a ref that means the thing we have a ref to is locked. So need to think about where that happens.
   - Can we do multiple readers on a single log for a pubsub pattern?
-  - I _think_ reader implements some sort of `read_from` thing so that an index can just start from it's last updated spot.
+  - I _think_ reader implements some sort of `read_from` thing so that an index can just start from its last updated spot.
 
 - So the interesting thing is that if you query a view, it should be async and not call back until the view is in sync with the log.
 

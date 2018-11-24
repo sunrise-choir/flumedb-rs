@@ -1,7 +1,7 @@
 //!
 //!# flumedb
 //!
-//!## flumedb.get (seq, cb)
+//!## flumedb.get (seq) -> Future<(Item, seq)> 
 //!
 //!This exposes `get` from the underlying `flumelog` module.
 //!This takes a `seq` as is the keys in the log,
@@ -11,13 +11,6 @@
 //!
 //!This exposes `stream` from the underlying `flumelog` module.
 //!It supports options familiar from leveldb ranges, i.e. `lt`, `gt`, `lte`, `gte`, `reverse`, `live`, `limit`.
-//!
-//!## flumedb.since => observable
-//!
-//!The [observable](https://github.com/dominictarr/obv) which represents the state of the log.
-//!This will be set to -1 if the view is empty, will monotonically increase as the log is appended
-//!to. The particular format of the number depends on the implementation of the log,
-//!but should usually be a number, for example, a incrementing integer, a timestamp, or byte offset.
 //!
 //!## flumedb.append (value, cb(err, seq))
 //!
@@ -133,8 +126,11 @@ extern crate byteorder;
 #[macro_use]
 extern crate serde_derive;
 
-pub mod offset_log;
-pub use offset_log::*;
+//pub mod offset_log;
+//pub use offset_log::*;
+
+pub mod flume_log;
+pub mod mem_log;
 
 #[cfg(test)]
 mod tests {
