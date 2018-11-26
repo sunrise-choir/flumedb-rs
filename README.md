@@ -5,6 +5,15 @@
 - Mikey asserted that the abstraction is a good one.
   - An append only log.
   - Multiple materialized views of the log.
+  - I'm not sure this is the correct abstraction.
+    - We use ssb as a key value store. The `seq` part doesn't belong in the higher level api.
+    - It builds indexes. And it's not really useful without the indexes. As far as I can tell, without the indexes, just dumping the raw log is not used by much (anything) so not sure if the ordering straight off the log is actually important.
+    - I think the thing that alj and others are uncomfortable about is flume is that the flume api is becoming part of the scuttlebot api. Or at least flume views are.
+    - how is flume exposed in scuttlebot?
+    - how are the indexes actually used?
+
+
+
 
 ## Braindump
 
