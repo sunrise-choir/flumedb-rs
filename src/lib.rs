@@ -130,6 +130,8 @@ pub mod offset_log;
 pub use offset_log::*;
 
 pub mod flume_log;
+pub mod file_log;
+pub mod flume_db;
 pub mod mem_log;
 
 #[cfg(test)]

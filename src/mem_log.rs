@@ -1,77 +1,6 @@
 use flume_log::*;
 
-use std::fs::File;
-use std::io::{SeekFrom, BufReader};
-use std::io::prelude::*;
-use std::collections::BTreeMap;
 use std::iter::IntoIterator;
-
-pub struct FileLog 
-{
-   log: BufReader<File>, 
-   length_at_seq: BTreeMap<usize, usize>,
-   latest: usize
-}
-
-impl FileLog {
-    fn new(path: String)-> FileLog{
-
-        let f = File::open(path)
-            .expect("Unable to open file");
-        let log = BufReader::new(f);
-
-
-        let length_at_seq = BTreeMap::new(); 
-
-        FileLog{
-            log,
-            length_at_seq,
-            latest: 0
-        }
-    }
-}
-
-impl FlumeLog for FileLog {
-    //TODO: errors.
-    fn get(&mut self, seq_num: usize) -> Result<Vec<u8>, ()> {
-        let length = self.length_at_seq.get(&seq_num)
-            .ok_or(())?;
-
-        let mut vec = Vec::with_capacity(*length);
-
-        //TODO: do we need to do this?
-        unsafe { vec.set_len(*length) };
-
-        self.log.seek(SeekFrom::Start(seq_num as u64))
-            .or(Err(()))?;
-        self.log.read(&mut vec)
-            .or(Err(()))?;
-
-        Ok(vec)
-    }
-    fn latest(&self) -> usize {
-        self.latest
-    }
-    fn clear(&mut self, seq: usize) {
-        unimplemented!()
-    
-    }
-    fn append(& mut self, buff: &[u8]) -> usize {
-        let seq = self.latest;
-        self.length_at_seq.insert(seq, buff.len());
-        self.latest += buff.len();
-        unimplemented!()
-    }
-}
-
-impl Iterator for FileLog {
-    type Item=Vec<u8>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-    
-        unimplemented!()
-    }
-}
 
 pub struct MemLog 
 {
@@ -99,7 +28,7 @@ impl FlumeLog for MemLog {
     fn latest(&self) -> usize {
         self.log.len()
     }
-    fn append(& mut self, buff: &[u8]) -> usize {
+    fn append(& mut self, buff: &[u8]) -> Result<usize, ()> {
 
         let seq = self.latest();
         let mut vec = Vec::new();
@@ -107,7 +36,7 @@ impl FlumeLog for MemLog {
 
         self.log.push(vec);
 
-        seq
+        Ok(seq)
     }
 
 }

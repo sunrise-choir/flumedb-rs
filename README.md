@@ -13,6 +13,13 @@
     - how are the indexes actually used?
 
 
+## Fun shit I could do:
+
+- maybe flag trying to do out of process for now. Just build little binaries that use the lib.
+- fuck around with channels
+  - what messages would go over a channel?
+- try and implement flumelog for commitlog
+- build a simple tool that can read the offset log and shove it into a flumelog
 
 
 ## Braindump
