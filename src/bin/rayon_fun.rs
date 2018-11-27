@@ -3,9 +3,11 @@ extern crate bus;
 extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
+extern crate rayon;
 
 use flumedb::*;
 use flumedb::flume_view::FlumeView;
+use rayon::prelude::*;
 use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
 use bus::Bus;
@@ -70,7 +72,7 @@ fn main() {
 
 
     vals
-        .iter()
+        .par_iter()
         .for_each(|val| {
             let result = view.get(val.buff.key.clone()).unwrap();
             println!("got value: {}", result);    
