@@ -21,6 +21,15 @@
 - try and implement flumelog for commitlog
 - build a simple tool that can read the offset log and shove it into a flumelog
 
+## Noticings
+
+- the log works fine just dealing in bytes. It doesn't need to care about deserializing stuff. But the views _do_ care about deserialized data. There isn't much you can do in a view on just raw bytes. But maybe there are use cases for it?
+  - a view might just be some state with an `append` method that expects a derserialized type.
+    - hashmap-view needs to be ask about the hash / key of the thing.
+    - about needs to be able to go deep into the structure of the message.
+    - feeds needs to be able to drill down to value.author
+    - first pass is that we just use serde's JSValue type and check if there's an eqivalent type in the cbor crate => it does.
+
 
 ## Braindump
 

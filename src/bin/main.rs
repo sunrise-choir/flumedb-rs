@@ -55,7 +55,7 @@ fn main() {
                     sender.send(1).unwrap();
                 },
                 Err(TryRecvError::Disconnected) => {
-                    trace!("got an Disconnected error");
+                    trace!("got a Disconnected error");
                     break;
                 },
                 _ => ()
