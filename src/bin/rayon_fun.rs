@@ -4,6 +4,11 @@ extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
 extern crate rayon;
+extern crate serde;
+extern crate serde_json;
+
+#[macro_use]
+extern crate serde_derive;
 
 use flumedb::*;
 use flumedb::flume_view::FlumeView;
@@ -13,15 +18,17 @@ use std::sync::mpsc;
 use bus::Bus;
 use std::thread;
 
+use serde_json::Value;
+
 use std::collections::HashMap;
 
 #[derive(Clone)]
 struct Data {
-    buff: DummyViewData,
+    buff: Vec<u8>,
     seq: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct DummyViewData {
     key: String,
     value: String,
@@ -30,11 +37,24 @@ struct DummyViewData {
 struct HashView {
     state: HashMap<String, usize>,
     latest: usize,
+    //deserializer: 
 }
 
-impl FlumeView<DummyViewData> for HashView {
-    fn append(&mut self, seq: usize, item: &DummyViewData){
-        self.state.insert(item.key.clone(), seq);
+impl FlumeView for HashView {
+    //T should have the trait bound that it's hashable or something?
+    fn append(&mut self, seq: usize, item: &[u8]){
+        //TODO: should append ever be able to fail?
+        let key = serde_json::from_slice(item)
+            .map(|value: Value|{
+                value["key"]
+                    .as_str()
+                    .expect("Expected a value with a key property")
+                    .to_string()
+            })
+            .unwrap();
+
+        self.state.insert(key, seq);
+        self.latest = seq;
     }
     fn latest(&self) -> usize {
         self.latest
@@ -59,22 +79,26 @@ fn main() {
     pretty_env_logger::init_timed();
     info!("Starting up...");
 
-    let mut vals = Vec::<Data>::new();
-    vals.push(Data{buff: DummyViewData{key: "key1".to_string(), value: "value1".to_string()}, seq: 0});
-    vals.push(Data{buff: DummyViewData{key: "key2".to_string(), value: "value2".to_string()}, seq: 22});
-    vals.push(Data{buff: DummyViewData{key: "key3".to_string(), value: "value3".to_string()}, seq: 333});
+    let vals: Vec<_> = (0..10000000)
+        .map(|num|(num.to_string(), num.to_string(), num))
+        .map(|(key, value, num)| (DummyViewData{key, value}, num))
+        .map(|(kv, num)| (serde_json::to_string(&kv).unwrap(), num))
+        .map(|(buff, num)| Data{buff: buff.into(), seq: num})
+        .collect();
 
     let mut view = HashView::new();
 
     vals
         .iter()
-        .for_each(|val| view.append(val.seq, &val.buff));
+        .for_each(|val| view.append(val.seq, &val.buff)); //We can't do a par_iter here. Makes sense, it needs to be sequential on the insertion order. But I _think_ we should be able to par_iter on the views collection.
 
-
-    vals
+    let sum: usize = vals
         .par_iter()
-        .for_each(|val| {
-            let result = view.get(val.buff.key.clone()).unwrap();
-            println!("got value: {}", result);    
-        });
+        .map(|val| serde_json::from_slice(&val.buff).unwrap())
+        .map(|val: DummyViewData| view.get(val.key.clone()).unwrap())
+        .sum();
+
+    println!("{}", sum);
+
+    info!("Done");
 } 
