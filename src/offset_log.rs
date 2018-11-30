@@ -39,7 +39,7 @@ fn is_valid_frame<T>(buf: & BytesMut, data_size: usize, last_valid_offset: usize
     next_offset == file_size && second_data_size == data_size 
 }
 
-impl<ByteType: > Encoder for OffsetCodec<ByteType> {
+impl<ByteType> Encoder for OffsetCodec<ByteType> {
     type Item = Vec<u8>;
     type Error = io::Error;
 

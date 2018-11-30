@@ -6,6 +6,7 @@ authors = ["Piet Geursen <pietgeursen@gmail.com>"]
 [dependencies]
 log = "0.4.6"
 tokio = "0.1.6"
+tokio-codec = "0.1.1"
 tokio-io = "0.1"
 tokio-fs = "0.1"
 bincode = "1.0.1"
