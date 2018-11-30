@@ -113,6 +113,39 @@ mod test {
     }
 
     #[test]
+    fn simple_encode_u64(){
+        let mut codec = OffsetCodec::<u64>::new();
+        let to_encode = vec![1,2,3,4];
+        let mut buf = BytesMut::with_capacity(20);
+        codec.encode(to_encode, &mut buf).unwrap();
+
+        assert_eq!(&buf[..], &[0,0,0,4,  1,2,3,4, 0,0,0,4, 0,0,0,0,0,0,0,20])
+    }
+
+    #[test]
+    fn encode_multi(){
+        let mut codec = OffsetCodec::<u32>::new();
+        let to_encode = vec![1,2,3,4];
+        let mut buf = BytesMut::with_capacity(32);
+        codec.encode(to_encode, &mut buf).unwrap();
+        let to_encode = vec![5,6,7,8];
+        codec.encode(to_encode, &mut buf).unwrap();
+
+        assert_eq!(&buf[..], &[0,0,0,4,  1,2,3,4, 0,0,0,4, 0,0,0,16, 0,0,0,4, 5,6,7,8, 0,0,0,4, 0,0,0,32])
+    }
+    #[test]
+    fn encode_multi_u64(){
+        let mut codec = OffsetCodec::<u64>::new();
+        let to_encode = vec![1,2,3,4];
+        let mut buf = BytesMut::with_capacity(40);
+        codec.encode(to_encode, &mut buf).unwrap();
+        let to_encode = vec![5,6,7,8];
+        codec.encode(to_encode, &mut buf).unwrap();
+
+        assert_eq!(&buf[0..20], &[0,0,0,4, 1,2,3,4, 0,0,0,4, 0,0,0,0,0,0,0,20]);
+        assert_eq!(&buf[20..], &[0,0,0,4, 5,6,7,8, 0,0,0,4, 0,0,0,0,0,0,0,40])
+    }
+    #[test]
     fn simple(){
         let mut codec = OffsetCodec::<u32>::new();
         let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,8, 0,0,0,20];
