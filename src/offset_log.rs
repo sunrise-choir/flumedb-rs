@@ -1,5 +1,5 @@
-use tokio_io::codec::Decoder;
-use bytes::{BytesMut};
+use tokio_io::codec::{Encoder, Decoder};
+use bytes::{BytesMut, BufMut};
 use std::{io };
 use std::mem::size_of;
 use std::marker::PhantomData;
@@ -39,6 +39,28 @@ fn is_valid_frame<T>(buf: & BytesMut, data_size: usize, last_valid_offset: usize
     next_offset == file_size && second_data_size == data_size 
 }
 
+impl<ByteType: > Encoder for OffsetCodec<ByteType> {
+    type Item = Vec<u8>;
+    type Error = io::Error;
+
+    fn encode(&mut self, item: Self::Item, dest: &mut BytesMut)-> Result<(), Self::Error>{
+        let chunk_size = size_of_framing_bytes::<ByteType>() + item.len();
+        dest.reserve(chunk_size);
+        dest.put_u32_be(item.len() as u32);
+        dest.put_slice(&item);
+        dest.put_u32_be(item.len() as u32);
+        self.last_valid_offset += chunk_size;
+
+        match size_of::<ByteType>() {
+            4 => dest.put_u32_be(self.last_valid_offset as u32),
+            8 => dest.put_u64_be(self.last_valid_offset as u64),
+            _ => panic!("Only supports 32 or 64 bit offset logs.") //TODO: Panicing here doesn't seem great.
+        }
+
+        Ok(())
+    }
+}
+
 impl<ByteType> Decoder for OffsetCodec<ByteType> {
     type Item = Data;
     type Error = io::Error;
@@ -76,9 +98,19 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 
 #[cfg(test)]    
 mod test {
-    use offset_log::Decoder;
+    use offset_log::{Decoder, Encoder};
     use offset_log::OffsetCodec;
     use bytes::{BytesMut};
+
+    #[test]
+    fn simple_encode(){
+        let mut codec = OffsetCodec::<u32>::new();
+        let to_encode = vec![1,2,3,4];
+        let mut buf = BytesMut::with_capacity(16);
+        codec.encode(to_encode, &mut buf).unwrap();
+
+        assert_eq!(&buf[..], &[0,0,0,4,  1,2,3,4, 0,0,0,4, 0,0,0,16])
+    }
 
     #[test]
     fn simple(){

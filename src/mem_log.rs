@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn get() {
         let mut log = MemLog::new();
-        let seq0 = log.append("Hello".as_bytes());
+        let seq0 = log.append("Hello".as_bytes()).unwrap();
 
         match log.get(seq0) {
             Ok(result) => {
@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn clear() {
         let mut log = MemLog::new();
-        let seq0 = log.append("Hello".as_bytes());
+        let seq0 = log.append("Hello".as_bytes()).unwrap();
         log.clear(seq0);
         match log.get(seq0) {
             Ok(result) => {
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn iter() {
         let mut log = MemLog::new();
-        let seq0 = log.append("Hello".as_bytes());
+        let seq0 = log.append("Hello".as_bytes()).unwrap();
         log.append(" ".as_bytes());
         log.append("World".as_bytes());
 

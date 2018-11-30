@@ -38,7 +38,17 @@
       - it needs to be able to append.
       - 
 
-
 - ssb-about uses ssb-backlinks which uses flumeview-query/links which uses flumeview-level and flumeview-query. Query uses map-filter-reduce.
+
+- what would matt want?
+  - what functionality does it need for you to implement patchwork on top of it
+  - if we implement it, would you use it?
+  - what functionality to implement.
+  - some sort of backlinks 
+  - some sort of query things
+  - is it good to do flumeview query?
+  - work with him to figure out the alternative.
+
+  - alj , mikey, mix, cel, matt.
  
 
