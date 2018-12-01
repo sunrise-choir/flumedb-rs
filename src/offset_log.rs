@@ -1,9 +1,12 @@
 use tokio_io::codec::{Encoder, Decoder};
 use bytes::{BytesMut, BufMut};
 use std::{io };
+use std::fs::File;
+use std::io::{SeekFrom, Seek, Read};
 use std::mem::size_of;
 use std::marker::PhantomData;
 use byteorder::{BigEndian, ReadBytesExt};
+use flume_log::*;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct OffsetCodec<ByteType> {
@@ -14,6 +17,54 @@ pub struct OffsetCodec<ByteType> {
 impl<ByteType> OffsetCodec<ByteType> {
     pub fn new() -> OffsetCodec<ByteType> {
         OffsetCodec { last_valid_offset: 0, byte_type: PhantomData }
+    }
+}
+
+pub struct OffsetLog<ByteType>{
+    file: File,
+    offset_codec: OffsetCodec<ByteType>,
+}
+
+impl<ByteType> OffsetLog<ByteType> {
+    fn new(path: String) -> OffsetLog<ByteType> {
+        let offset_codec = OffsetCodec::<ByteType>::new();
+        let file = File::open(path)
+            .expect("Unable to open file");
+
+        OffsetLog{
+            offset_codec,
+            file
+        }
+    }
+}
+
+impl<ByteType> FlumeLog for OffsetLog<ByteType> {
+
+    fn get(&mut self, seq_num: usize) -> Result<Vec<u8>, ()>{
+        let mut buf = vec![0;4096];
+        self.file.seek(SeekFrom::Start(seq_num as u64))
+            .and_then(|_|{
+                self.file.read(&mut buf)
+            })
+            .and_then(|n|{
+                self.offset_codec.decode(&mut buf.into())
+            })
+            .map(|val| val.unwrap().data_buffer ) //TODO don't just unwrap here.
+            .map_err(|_| ())
+
+    }
+
+    fn latest(&self) -> usize{
+        self.offset_codec.last_valid_offset
+    }
+
+    fn append(& mut self, buff: &[u8]) -> Result<usize, ()>{
+        self.file.seek(SeekFrom::End(0)); // Could store a bool for is_at_end to avoid the sys call. If it is actually a sys call.
+        unimplemented!();
+    }
+
+    fn clear(&mut self, seq_num: usize){
+        unimplemented!();
     }
 }
 
@@ -99,8 +150,10 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 #[cfg(test)]    
 mod test {
     use offset_log::{Decoder, Encoder};
-    use offset_log::OffsetCodec;
+    use offset_log::{OffsetCodec, OffsetLog};
+    use flume_log::FlumeLog;
     use bytes::{BytesMut};
+    use serde_json::*;
 
     #[test]
     fn simple_encode(){
@@ -268,5 +321,20 @@ mod test {
             },
             _ => assert!(true)
         }
+    }
+    #[test]
+    fn read_from_a_file(){
+        let mut offset_log = OffsetLog::<u32>::new("./db/test".to_string());
+        let result = offset_log.get(0)
+            .and_then(|val| from_slice(&val).or(Err(())))
+            .map(|val: Value| { 
+                match val["value"] {
+                    Value::Number(ref num) => num.as_u64().unwrap(),
+                    _ => panic!()
+                }
+            
+            })
+            .unwrap();
+        assert_eq!(result , 0);
     }
 }
