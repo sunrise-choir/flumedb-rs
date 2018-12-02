@@ -36,6 +36,33 @@ pub struct OffsetLog<ByteType>{
     offset_codec: OffsetCodec<ByteType>,
 }
 
+pub struct OffsetLogIter<'a, ByteType> {
+    log: &'a mut OffsetLog<ByteType>,
+    next_seq: u64,
+}
+
+impl<'a, ByteType> OffsetLogIter<'a, ByteType>{
+    fn new(log: &'a mut OffsetLog<ByteType>) -> OffsetLogIter<ByteType>{
+        OffsetLogIter{
+            log,
+            next_seq: 0
+        }
+    }
+}
+
+impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType>{
+    type Item = Vec<u8>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        self.log.get(self.next_seq)
+            .map(|item|{
+                self.next_seq += item.len() as u64 + size_of_framing_bytes::<ByteType>() as u64;
+                item
+            })
+            .ok()
+    }
+}
+
 impl<ByteType> OffsetLog<ByteType> {
     fn new(path: String) -> OffsetLog<ByteType> {
 
@@ -188,7 +215,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 #[cfg(test)]    
 mod test {
     use offset_log::{Decoder, Encoder};
-    use offset_log::{OffsetCodec, OffsetLog};
+    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter};
     use flume_log::FlumeLog;
     use bytes::{BytesMut};
     use serde_json::*;
@@ -438,5 +465,31 @@ mod test {
             .sum();
 
         assert_eq!(sum , 6);
+    }
+
+    #[test]
+    fn offset_log_as_iter(){
+        let filename = "./db/test".to_string();
+
+        let mut offset_log = OffsetLog::<u32>::new(filename);
+
+        let log_iter = OffsetLogIter::new(&mut offset_log);
+
+        let sum: u64 = log_iter
+            .take(5)
+            .map(|val| from_slice(&val).unwrap())
+            .map(|val: Value| { 
+                match val["value"] {
+                    Value::Number(ref num) => {
+                        let result = num.as_u64().unwrap();
+                        result
+                    },
+                    _ => panic!()
+                }
+            
+            })
+            .sum();
+
+        assert_eq!(sum , 10);
     }
 }
