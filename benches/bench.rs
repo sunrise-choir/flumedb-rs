@@ -10,6 +10,7 @@ extern crate serde_derive;
 
 extern crate tokio;
 extern crate tokio_io;
+extern crate tokio_codec;
 extern crate tokio_fs;
 extern crate bytes;
 extern crate byteorder;
@@ -19,7 +20,7 @@ use tokio_io::codec::Decoder;
 use flumedb::offset_log::OffsetCodec;
 use bytes::{BytesMut};
 use flumedb::offset_log::*;
-use tokio_io::codec::{FramedRead};
+use tokio_codec::{Framed};
 use tokio::fs::File;
 use tokio::prelude::*;
 use serde_json::{Value};
@@ -48,7 +49,7 @@ fn reduce_log_to_sum_of_value(b: &mut Bencher) {
             .then(|result|{
                 match result {
                     Ok(f) => {
-                        let reads = FramedRead::new(f, OffsetCodec::<u32>::new())
+                        let reads = Framed::new(f, OffsetCodec::<u32>::new())
                             .map(|val| {
                                 let jsn : Value = serde_json::from_slice(&val.data_buffer).unwrap();
                                 match jsn["value"] {
@@ -70,7 +71,7 @@ fn reduce_log_to_sum_of_value(b: &mut Bencher) {
             .then(|result| {
                 tokio::spawn(result.unwrap()
                          .then(|res|{
-                             println!("res was {}", res.unwrap());
+                             //println!("res was {}", res.unwrap());
                              Ok(())
                          }))
             });
