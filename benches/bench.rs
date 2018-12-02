@@ -23,7 +23,7 @@ use flumedb::offset_log::*;
 use tokio_codec::{Framed};
 use tokio::fs::File;
 use tokio::prelude::*;
-use serde_json::{Value};
+use serde_json::{Value, from_slice};
 
 
 
@@ -43,6 +43,29 @@ fn simple(b: &mut Bencher){
     })
 }
 
+fn reduce_log_to_sum_of_value_slow_iter(b: &mut Bencher) {
+    b.iter(||{
+        let filename = "./db/test".to_string();
+
+        let mut offset_log = OffsetLog::<u32>::new(filename);
+
+        let log_iter = OffsetLogIter::new(&mut offset_log);
+
+        let sum: u64 = log_iter
+            .map(|val| from_slice(&val).unwrap())
+            .map(|val: Value| { 
+                match val["value"] {
+                    Value::Number(ref num) => {
+                        let result = num.as_u64().unwrap();
+                        result
+                    },
+                    _ => panic!()
+                }
+
+            })
+        .sum();
+    })
+}
 fn reduce_log_to_sum_of_value(b: &mut Bencher) {
     b.iter(||{
         let stream = File::open("./db/test")
@@ -79,5 +102,5 @@ fn reduce_log_to_sum_of_value(b: &mut Bencher) {
         tokio::run(stream);
     });
 }
-benchmark_group!(benches, reduce_log_to_sum_of_value, simple);
+benchmark_group!(benches, reduce_log_to_sum_of_value, simple, reduce_log_to_sum_of_value_slow_iter);
 benchmark_main!(benches);

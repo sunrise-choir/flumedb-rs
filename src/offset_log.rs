@@ -42,7 +42,7 @@ pub struct OffsetLogIter<'a, ByteType> {
 }
 
 impl<'a, ByteType> OffsetLogIter<'a, ByteType>{
-    fn new(log: &'a mut OffsetLog<ByteType>) -> OffsetLogIter<ByteType>{
+    pub fn new(log: &'a mut OffsetLog<ByteType>) -> OffsetLogIter<ByteType>{
         OffsetLogIter{
             log,
             next_seq: 0
@@ -54,6 +54,9 @@ impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType>{
     type Item = Vec<u8>;
     
     fn next(&mut self) -> Option<Self::Item> {
+        if self.next_seq >= self.log.offset_codec.length {
+            return None
+        }
         self.log.get(self.next_seq)
             .map(|item|{
                 self.next_seq += item.len() as u64 + size_of_framing_bytes::<ByteType>() as u64;
@@ -64,7 +67,7 @@ impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType>{
 }
 
 impl<ByteType> OffsetLog<ByteType> {
-    fn new(path: String) -> OffsetLog<ByteType> {
+    pub fn new(path: String) -> OffsetLog<ByteType> {
 
         let file = OpenOptions::new()
             .read(true)
