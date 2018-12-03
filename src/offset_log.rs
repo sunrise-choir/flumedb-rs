@@ -1,8 +1,8 @@
 use tokio_io::codec::{Encoder, Decoder};
 use bytes::{BytesMut, BufMut};
-use std::{io };
+use std::{io};
 use std::fs::{File, OpenOptions};
-use std::io::{SeekFrom, Seek, Read, Write};
+use std::io::{SeekFrom, Seek, Read, Write, BufRead, BufReader};
 use std::mem::size_of;
 use std::marker::PhantomData;
 use byteorder::{BigEndian, ReadBytesExt};
@@ -34,6 +34,79 @@ impl<ByteType> OffsetCodec<ByteType> {
 pub struct OffsetLog<ByteType>{
     file: File,
     offset_codec: OffsetCodec<ByteType>,
+}
+
+pub struct OffsetLogBufIter<ByteType, R> {
+    reader: BufReader<R>,
+    offset_codec: OffsetCodec<ByteType>,
+}
+
+impl<ByteType, R:Read> OffsetLogBufIter<ByteType, R>{
+    pub fn new(file: R) -> OffsetLogBufIter<ByteType, R> {
+
+        let reader  = BufReader::new(file);
+        let offset_codec = OffsetCodec::new();
+
+        OffsetLogBufIter{
+            reader,
+            offset_codec
+        }
+    }
+}
+
+impl<ByteType, R:Read> Iterator for OffsetLogBufIter<ByteType, R> {
+    type Item = Vec<u8>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+
+        let mut bytes = BytesMut::new();
+        let mut buff_len: usize;
+        let mut total_consumed: usize = 0;
+
+        {
+            let buff = self.reader.fill_buf().unwrap();
+            bytes.extend_from_slice(buff);
+            buff_len = buff.len();
+        }
+
+        if bytes.len() == 0 {
+            return None
+        }
+
+        // We need 4 bytes to be able to check the length of the data expected.
+        if bytes.len() < 4{
+            {
+                self.reader.consume(bytes.len());
+                total_consumed = bytes.len()
+            }
+
+            let buff = self.reader.fill_buf().unwrap();
+            bytes.extend_from_slice(buff);
+            buff_len = buff.len();
+        }
+
+
+        let data_size = (&bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
+        let framed_size = data_size + size_of_framing_bytes::<ByteType>(); 
+
+        while bytes.len() < framed_size {
+            self.reader.consume(buff_len);
+            total_consumed += buff_len;
+            let buff = self.reader.fill_buf().unwrap();
+            buff_len = buff.len();
+
+            bytes.extend_from_slice(buff);
+        }
+
+        self.offset_codec.decode(&mut bytes)
+            .map(|res|{
+                res.map(|data|{
+                    self.reader.consume(data.data_buffer.len() + size_of_framing_bytes::<ByteType>() - total_consumed );
+                    data.data_buffer
+                })
+            })
+            .unwrap_or(None)
+    }
 }
 
 pub struct OffsetLogIter<'a, ByteType> {
@@ -218,7 +291,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 #[cfg(test)]    
 mod test {
     use offset_log::{Decoder, Encoder};
-    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter};
+    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter, OffsetLogBufIter};
     use flume_log::FlumeLog;
     use bytes::{BytesMut};
     use serde_json::*;
@@ -495,4 +568,30 @@ mod test {
 
         assert_eq!(sum , 10);
     }
+    #[test]
+    fn offset_log_as_buf_iter(){
+
+        let filename = "./db/test".to_string();
+        let file = std::fs::File::open(filename).unwrap();
+
+        let log_iter = OffsetLogBufIter::<u32, std::fs::File>::new(file);
+
+        let sum: u64 = log_iter
+            .take(5)
+            .map(|val| from_slice(&val).unwrap())
+            .map(|val: Value| { 
+                match val["value"] {
+                    Value::Number(ref num) => {
+                        let result = num.as_u64().unwrap();
+                        result
+                    },
+                    _ => panic!()
+                }
+            
+            })
+            .sum();
+
+        assert_eq!(sum , 10);
+    }
+
 }

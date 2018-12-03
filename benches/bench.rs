@@ -43,6 +43,31 @@ fn simple(b: &mut Bencher){
     })
 }
 
+fn reduce_log_to_sum_of_value_buffered_iter(b: &mut Bencher) {
+    b.iter(||{
+        let filename = "./db/test".to_string();
+        let file = std::fs::File::open(filename).unwrap();
+
+        let log_iter = OffsetLogBufIter::<u32, std::fs::File>::new(file);
+
+        let sum: u64 = log_iter
+            .map(|val| from_slice(&val).unwrap())
+            .map(|val: Value| { 
+                match val["value"] {
+                    Value::Number(ref num) => {
+                        let result = num.as_u64().unwrap();
+                        result
+                    },
+                    _ => panic!()
+                }
+
+            })
+            .sum();
+
+        //println!("{}", sum);
+
+    })
+}
 fn reduce_log_to_sum_of_value_slow_iter(b: &mut Bencher) {
     b.iter(||{
         let filename = "./db/test".to_string();
@@ -102,5 +127,5 @@ fn reduce_log_to_sum_of_value(b: &mut Bencher) {
         tokio::run(stream);
     });
 }
-benchmark_group!(benches, reduce_log_to_sum_of_value, simple, reduce_log_to_sum_of_value_slow_iter);
+benchmark_group!(benches, reduce_log_to_sum_of_value, simple, reduce_log_to_sum_of_value_slow_iter, reduce_log_to_sum_of_value_buffered_iter);
 benchmark_main!(benches);
