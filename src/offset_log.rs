@@ -57,6 +57,11 @@ impl<ByteType, R:Read> OffsetLogBufIter<ByteType, R>{
 impl<ByteType, R:Read> Iterator for OffsetLogBufIter<ByteType, R> {
     type Item = Vec<u8>;
     
+    //Yikes this is hacky!
+    //  - Using scopes like this to keep the compiler happy looks yuck. How could that be done
+    //  nicer?
+    //  - the buffer housekeeping could get moved into the OffsetLogBufIter.
+    
     fn next(&mut self) -> Option<Self::Item> {
 
         let mut bytes = BytesMut::new();
@@ -64,7 +69,7 @@ impl<ByteType, R:Read> Iterator for OffsetLogBufIter<ByteType, R> {
         let mut total_consumed: usize = 0;
 
         {
-            let buff = self.reader.fill_buf().unwrap();
+            let buff = self.reader.fill_buf().expect("Buffered read failed trying to read from file");
             bytes.extend_from_slice(buff);
             buff_len = buff.len();
         }
@@ -80,7 +85,7 @@ impl<ByteType, R:Read> Iterator for OffsetLogBufIter<ByteType, R> {
                 total_consumed = bytes.len()
             }
 
-            let buff = self.reader.fill_buf().unwrap();
+            let buff = self.reader.fill_buf().expect("Buffered read failed trying to read from file");
             bytes.extend_from_slice(buff);
             buff_len = buff.len();
         }
@@ -92,7 +97,7 @@ impl<ByteType, R:Read> Iterator for OffsetLogBufIter<ByteType, R> {
         while bytes.len() < framed_size {
             self.reader.consume(buff_len);
             total_consumed += buff_len;
-            let buff = self.reader.fill_buf().unwrap();
+            let buff = self.reader.fill_buf().expect("Buffered read failed trying to read from file");
             buff_len = buff.len();
 
             bytes.extend_from_slice(buff);
