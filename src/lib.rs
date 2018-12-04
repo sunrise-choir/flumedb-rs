@@ -1,7 +1,7 @@
 //!
 //!# flumedb
 //!
-//!## flumedb.get (seq) -> Future<(Item, seq)> 
+//!## flumedb.get (seq) -> Future<(Item, seq)>
 //!
 //!This exposes `get` from the underlying `flumelog` module.
 //!This takes a `seq` as is the keys in the log,
@@ -116,24 +116,23 @@
 //!which will be called exactly once, when that view is up to date with the log
 //!(from the point where it is called).
 
+extern crate byteorder;
+extern crate bytes;
 extern crate serde;
 extern crate serde_json;
 extern crate tokio;
 extern crate tokio_io;
-extern crate bytes;
-extern crate byteorder;
 
 pub mod offset_log;
 pub use offset_log::*;
 
+pub mod flume_db;
 pub mod flume_log;
 pub mod flume_view;
-pub mod flume_db;
 pub mod mem_log;
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn it_works() {
-    }
+    fn it_works() {}
 }
