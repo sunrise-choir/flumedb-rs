@@ -1,10 +1,4 @@
 extern crate flumedb;
-use flumedb::*; 
-use std::iter::Filter;
-
-fn combine_iters<Item>(i1: &Iterator<Item=Item>, i2: &Iterator<Item=Item> ) {
-
-}
 
 fn main() {
 

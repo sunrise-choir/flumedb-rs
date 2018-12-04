@@ -4,7 +4,6 @@ extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
 
-use flumedb::*;
 use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
 use bus::Bus;

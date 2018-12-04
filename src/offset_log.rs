@@ -166,9 +166,6 @@ impl<ByteType> OffsetLog<ByteType> {
         }
     }
 
-    fn flush(&mut self) -> Result<(), std::io::Error> {
-        self.file.flush()
-    }
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
@@ -180,7 +177,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
             .and_then(|_|{
                 self.file.read(&mut buf)
             })
-            .and_then(|n|{
+            .and_then(|_|{
                 self.offset_codec.decode(&mut buf.into())
             })
             .map(|val| val.unwrap().data_buffer ) //TODO don't just unwrap here.
@@ -208,7 +205,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
             .or(Err(()))
     }
 
-    fn clear(&mut self, seq_num: u64){
+    fn clear(&mut self, _seq_num: u64){
         unimplemented!();
     }
 }
@@ -223,16 +220,11 @@ fn size_of_framing_bytes<T>() -> usize{
     size_of::<u32>() * 2 + size_of::<T>()
 }
 
-fn is_valid_frame<T>(buf: & BytesMut, data_size: usize, last_valid_offset: u64 ) -> bool {
+fn is_valid_frame<T>(buf: & BytesMut, data_size: usize) -> bool {
     let second_data_size_index = data_size + size_of::<u32>();
-    let filesize_index = data_size + size_of::<u32>() * 2;
 
     let second_data_size = (&buf[second_data_size_index..]).read_u32::<BigEndian>().unwrap() as usize;
-    let file_size = (&buf[filesize_index..]).read_uint::<BigEndian>(size_of::<T>()).unwrap() as u64;
 
-    let next_offset = last_valid_offset + size_of_framing_bytes::<T>() as u64 + data_size as u64;
-
-    //next_offset == file_size && second_data_size == data_size 
     second_data_size == data_size 
 }
 
@@ -272,7 +264,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
             return Ok(None)
         }
 
-        if !is_valid_frame::<ByteType>(buf, data_size, self.last_valid_offset){
+        if !is_valid_frame::<ByteType>(buf, data_size){
             return Err(io::Error::new(io::ErrorKind::Other, "Frame values were incorrect. The database may be corrupt"))
         }
 
@@ -300,7 +292,6 @@ mod test {
     use flume_log::FlumeLog;
     use bytes::{BytesMut};
     use serde_json::*;
-    use std::fs::File;
 
     #[test]
     fn simple_encode(){
@@ -451,19 +442,6 @@ mod test {
 
         match result {
             Ok(Some(_)) => {
-                assert!(false)
-            },
-            _ => assert!(true)
-        }
-    }
-    //#[test] I think this is not needed.
-    fn errors_with_bad_offset_value(){
-        let mut codec = OffsetCodec::<u32>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,8, 0,0,0,21];
-        let result = codec.decode(&mut BytesMut::from(frame_bytes));
-
-        match result {
-            Ok(Some(data)) => {
                 assert!(false)
             },
             _ => assert!(true)

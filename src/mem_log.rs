@@ -8,12 +8,13 @@ pub struct MemLog
 }
 
 impl MemLog {
-    fn new()->MemLog{
+    pub fn new()->MemLog{
         let log = Vec::new();
         MemLog{
             log 
         }
     }
+
 }
 
 impl FlumeLog for MemLog {
@@ -82,8 +83,8 @@ mod tests {
     fn iter() {
         let mut log = MemLog::new();
         let seq0 = log.append("Hello".as_bytes()).unwrap();
-        log.append(" ".as_bytes());
-        log.append("World".as_bytes());
+        log.append(" ".as_bytes()).unwrap();
+        log.append("World".as_bytes()).unwrap();
 
         let result = log.into_iter()
             .map(|bytes|String::from_utf8_lossy(bytes))

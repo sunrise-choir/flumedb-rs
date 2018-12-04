@@ -11,12 +11,9 @@ extern crate serde_cbor;
 #[macro_use]
 extern crate serde_derive;
 
-use flumedb::*;
 use flumedb::flume_view::FlumeView;
 use rayon::prelude::*;
 use bincode::{serialize, deserialize};
-
-use serde_json::Value;
 
 use std::collections::HashMap;
 
