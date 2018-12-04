@@ -37,30 +37,30 @@ pub struct OffsetLog<ByteType> {
     offset_codec: OffsetCodec<ByteType>,
 }
 
-pub struct OffsetLogBufIter<ByteType, R> {
+pub struct OffsetLogIter<ByteType, R> {
     reader: BufReader<R>,
     offset_codec: OffsetCodec<ByteType>,
 }
 
-impl<ByteType, R: Read> OffsetLogBufIter<ByteType, R> {
-    pub fn new(file: R) -> OffsetLogBufIter<ByteType, R> {
+impl<ByteType, R: Read> OffsetLogIter<ByteType, R> {
+    pub fn new(file: R) -> OffsetLogIter<ByteType, R> {
         let reader = BufReader::new(file);
         let offset_codec = OffsetCodec::new();
 
-        OffsetLogBufIter {
+        OffsetLogIter {
             reader,
             offset_codec,
         }
     }
 }
 
-impl<ByteType, R: Read> Iterator for OffsetLogBufIter<ByteType, R> {
+impl<ByteType, R: Read> Iterator for OffsetLogIter<ByteType, R> {
     type Item = Vec<u8>;
 
     //Yikes this is hacky!
     //  - Using scopes like this to keep the compiler happy looks yuck. How could that be done
     //  nicer?
-    //  - the buffer housekeeping could get moved into the OffsetLogBufIter.
+    //  - the buffer housekeeping could get moved into the OffsetLogIter.
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut bytes = BytesMut::new();
@@ -122,34 +122,6 @@ impl<ByteType, R: Read> Iterator for OffsetLogBufIter<ByteType, R> {
                 })
             })
             .unwrap_or(None)
-    }
-}
-
-pub struct OffsetLogIter<'a, ByteType> {
-    log: &'a mut OffsetLog<ByteType>,
-    next_seq: u64,
-}
-
-impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
-    pub fn new(log: &'a mut OffsetLog<ByteType>) -> OffsetLogIter<ByteType> {
-        OffsetLogIter { log, next_seq: 0 }
-    }
-}
-
-impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
-    type Item = Vec<u8>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next_seq >= self.log.offset_codec.length {
-            return None;
-        }
-        self.log
-            .get(self.next_seq)
-            .map(|item| {
-                self.next_seq += item.len() as u64 + size_of_framing_bytes::<ByteType>() as u64;
-                item
-            })
-            .ok()
     }
 }
 
@@ -296,7 +268,7 @@ mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
     use offset_log::{Decoder, Encoder};
-    use offset_log::{OffsetCodec, OffsetLog, OffsetLogBufIter, OffsetLogIter};
+    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter};
     use serde_json::*;
 
     #[test]
@@ -547,31 +519,9 @@ mod test {
     #[test]
     fn offset_log_as_iter() {
         let filename = "./db/test".to_string();
-
-        let mut offset_log = OffsetLog::<u32>::new(filename);
-
-        let log_iter = OffsetLogIter::new(&mut offset_log);
-
-        let sum: u64 = log_iter
-            .take(5)
-            .map(|val| from_slice(&val).unwrap())
-            .map(|val: Value| match val["value"] {
-                Value::Number(ref num) => {
-                    let result = num.as_u64().unwrap();
-                    result
-                }
-                _ => panic!(),
-            })
-            .sum();
-
-        assert_eq!(sum, 10);
-    }
-    #[test]
-    fn offset_log_as_buf_iter() {
-        let filename = "./db/test".to_string();
         let file = std::fs::File::open(filename).unwrap();
 
-        let log_iter = OffsetLogBufIter::<u32, std::fs::File>::new(file);
+        let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
 
         let sum: u64 = log_iter
             .take(5)
