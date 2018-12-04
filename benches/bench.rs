@@ -84,7 +84,7 @@ fn offset_log_iter(b: &mut Bencher) {
         let filename = "./db/test".to_string();
         let file = std::fs::File::open(filename).unwrap();
 
-        let log_iter = OffsetLogBufIter::<u32, std::fs::File>::new(file);
+        let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
 
         let sum: u64 = log_iter
             .map(|val| from_slice(&val).unwrap())
