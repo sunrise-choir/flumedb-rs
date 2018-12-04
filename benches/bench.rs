@@ -9,8 +9,6 @@ extern crate serde_json;
 extern crate byteorder;
 extern crate bytes;
 extern crate flumedb;
-extern crate tokio;
-extern crate tokio_io;
 extern crate tokio_codec;
 
 use bytes::BytesMut;
@@ -19,7 +17,7 @@ use flumedb::mem_log::MemLog;
 use flumedb::offset_log::OffsetCodec;
 use flumedb::offset_log::*;
 use serde_json::{from_slice, Value};
-use tokio_io::codec::Decoder;
+use tokio_codec::Decoder;
 
 const NUM_ENTRIES: u32 = 10000;
 
