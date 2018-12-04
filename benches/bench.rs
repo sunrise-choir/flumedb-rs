@@ -42,6 +42,22 @@ fn offset_log_decode(b: &mut Bencher) {
         }
     })
 }
+fn offset_log_append(b: &mut Bencher) {
+    b.iter(|| {
+        let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
+        std::fs::remove_file(filename.clone()).unwrap_or(());
+
+        let test_vec = b"{\"value\": 1}";
+
+        let mut offset_log = OffsetLog::<u32>::new(filename);
+
+        let offsets: Vec<u64> = (0..NUM_ENTRIES)
+            .map(|_| offset_log.append(test_vec).unwrap())
+            .collect();
+
+        assert_eq!(offsets.len(), NUM_ENTRIES as usize);
+    })
+}
 
 fn offset_log_get(b: &mut Bencher) {
     let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
@@ -63,55 +79,7 @@ fn offset_log_get(b: &mut Bencher) {
     })
 }
 
-fn mem_log_get(b: &mut Bencher) {
-    let mut log = MemLog::new();
-
-    let test_vec = b"{\"value\": 1}";
-
-    let offsets: Vec<u64> = (0..NUM_ENTRIES)
-        .map(|_| log.append(test_vec).unwrap())
-        .collect();
-
-    b.iter(|| {
-        for offset in offsets.clone() {
-            let result = log.get(offset).unwrap();
-            assert_eq!(result.len(), test_vec.len());
-        }
-    })
-}
-
-fn offset_log_append(b: &mut Bencher) {
-    b.iter(|| {
-        let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
-        std::fs::remove_file(filename.clone()).unwrap_or(());
-
-        let test_vec = b"{\"value\": 1}";
-
-        let mut offset_log = OffsetLog::<u32>::new(filename);
-
-        let offsets: Vec<u64> = (0..NUM_ENTRIES)
-            .map(|_| offset_log.append(test_vec).unwrap())
-            .collect();
-
-        assert_eq!(offsets.len(), NUM_ENTRIES as usize);
-    })
-}
-
-fn mem_log_append(b: &mut Bencher) {
-    b.iter(|| {
-        let mut log = MemLog::new();
-
-        let test_vec = b"{\"value\": 1}";
-
-        let offsets: Vec<u64> = (0..NUM_ENTRIES)
-            .map(|_| log.append(test_vec).unwrap())
-            .collect();
-
-        assert_eq!(offsets.len(), NUM_ENTRIES as usize);
-    })
-}
-
-fn reduce_log_to_sum_of_value_buffered_iter(b: &mut Bencher) {
+fn offset_log_iter(b: &mut Bencher) {
     b.iter(|| {
         let filename = "./db/test".to_string();
         let file = std::fs::File::open(filename).unwrap();
@@ -132,15 +100,50 @@ fn reduce_log_to_sum_of_value_buffered_iter(b: &mut Bencher) {
         assert!(sum > 0);
     })
 }
-fn reduce_log_to_sum_of_value_slow_iter(b: &mut Bencher) {
+
+fn mem_log_get(b: &mut Bencher) {
+    let mut log = MemLog::new();
+
+    let test_vec = b"{\"value\": 1}";
+
+    let offsets: Vec<u64> = (0..NUM_ENTRIES)
+        .map(|_| log.append(test_vec).unwrap())
+        .collect();
+
     b.iter(|| {
-        let filename = "./db/test".to_string();
+        for offset in offsets.clone() {
+            let result = log.get(offset).unwrap();
+            assert_eq!(result.len(), test_vec.len());
+        }
+    })
+}
 
-        let mut offset_log = OffsetLog::<u32>::new(filename);
+fn mem_log_append(b: &mut Bencher) {
+    b.iter(|| {
+        let mut log = MemLog::new();
 
-        let log_iter = OffsetLogIter::new(&mut offset_log);
+        let test_vec = b"{\"value\": 1}";
 
-        let sum: u64 = log_iter
+        let offsets: Vec<u64> = (0..NUM_ENTRIES)
+            .map(|_| log.append(test_vec).unwrap())
+            .collect();
+
+        assert_eq!(offsets.len(), NUM_ENTRIES as usize);
+    })
+}
+
+fn mem_log_iter(b: &mut Bencher) {
+    let mut log = MemLog::new();
+
+    let test_vec = b"{\"value\": 1}";
+
+    (0..NUM_ENTRIES).for_each(|_| {
+        log.append(test_vec).unwrap();
+    });
+
+    b.iter(|| {
+        let sum: u64 = log
+            .into_iter()
             .map(|val| from_slice(&val).unwrap())
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
@@ -150,10 +153,12 @@ fn reduce_log_to_sum_of_value_slow_iter(b: &mut Bencher) {
                 _ => panic!(),
             })
             .sum();
+
         assert!(sum > 0);
     })
 }
-fn reduce_log_to_sum_of_value(b: &mut Bencher) {
+
+fn tokio_reduce_offset_log(b: &mut Bencher) {
     b.iter(|| {
         let stream = File::open("./db/test")
             .then(|result| match result {
@@ -185,13 +190,15 @@ fn reduce_log_to_sum_of_value(b: &mut Bencher) {
         tokio::run(stream);
     });
 }
-benchmark_group!(offset_log, offset_log_get, offset_log_append);
-benchmark_group!(mem_log, mem_log_get, mem_log_append);
+
 benchmark_group!(
-    benches,
-    reduce_log_to_sum_of_value,
-    offset_log_decode,
-    reduce_log_to_sum_of_value_slow_iter,
-    reduce_log_to_sum_of_value_buffered_iter
+    offset_log,
+    offset_log_get,
+    offset_log_append,
+    offset_log_iter,
+    offset_log_decode
 );
+benchmark_group!(mem_log, mem_log_get, mem_log_append, mem_log_iter);
+benchmark_group!(tokio, tokio_reduce_offset_log);
+
 benchmark_main!(offset_log, mem_log);
