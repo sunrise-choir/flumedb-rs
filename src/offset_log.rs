@@ -1,37 +1,38 @@
-use tokio_io::codec::{Encoder, Decoder};
-use bytes::{BytesMut, BufMut};
-use std::{io};
-use std::fs::{File, OpenOptions};
-use std::io::{SeekFrom, Seek, Read, Write, BufRead, BufReader};
-use std::mem::size_of;
-use std::marker::PhantomData;
 use byteorder::{BigEndian, ReadBytesExt};
+use bytes::{BufMut, BytesMut};
 use flume_log::*;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::marker::PhantomData;
+use std::mem::size_of;
+use tokio_io::codec::{Decoder, Encoder};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct OffsetCodec<ByteType> {
     last_valid_offset: u64,
     length: u64,
-    byte_type: PhantomData<ByteType>
+    byte_type: PhantomData<ByteType>,
 }
 
 impl<ByteType> OffsetCodec<ByteType> {
     pub fn new() -> OffsetCodec<ByteType> {
-        OffsetCodec { 
-            last_valid_offset: 0, 
+        OffsetCodec {
+            last_valid_offset: 0,
             length: 0,
-            byte_type: PhantomData }
+            byte_type: PhantomData,
+        }
     }
     pub fn with_length(length: u64) -> OffsetCodec<ByteType> {
-        OffsetCodec { 
-            last_valid_offset: 0, 
+        OffsetCodec {
+            last_valid_offset: 0,
             length,
-            byte_type: PhantomData 
+            byte_type: PhantomData,
         }
     }
 }
 
-pub struct OffsetLog<ByteType>{
+pub struct OffsetLog<ByteType> {
     file: File,
     offset_codec: OffsetCodec<ByteType>,
 }
@@ -41,72 +42,82 @@ pub struct OffsetLogBufIter<ByteType, R> {
     offset_codec: OffsetCodec<ByteType>,
 }
 
-impl<ByteType, R:Read> OffsetLogBufIter<ByteType, R>{
+impl<ByteType, R: Read> OffsetLogBufIter<ByteType, R> {
     pub fn new(file: R) -> OffsetLogBufIter<ByteType, R> {
-
-        let reader  = BufReader::new(file);
+        let reader = BufReader::new(file);
         let offset_codec = OffsetCodec::new();
 
-        OffsetLogBufIter{
+        OffsetLogBufIter {
             reader,
-            offset_codec
+            offset_codec,
         }
     }
 }
 
-impl<ByteType, R:Read> Iterator for OffsetLogBufIter<ByteType, R> {
+impl<ByteType, R: Read> Iterator for OffsetLogBufIter<ByteType, R> {
     type Item = Vec<u8>;
-    
+
     //Yikes this is hacky!
     //  - Using scopes like this to keep the compiler happy looks yuck. How could that be done
     //  nicer?
     //  - the buffer housekeeping could get moved into the OffsetLogBufIter.
-    
-    fn next(&mut self) -> Option<Self::Item> {
 
+    fn next(&mut self) -> Option<Self::Item> {
         let mut bytes = BytesMut::new();
         let mut buff_len: usize;
         let mut total_consumed: usize = 0;
 
         {
-            let buff = self.reader.fill_buf().expect("Buffered read failed trying to read from file");
+            let buff = self
+                .reader
+                .fill_buf()
+                .expect("Buffered read failed trying to read from file");
             bytes.extend_from_slice(buff);
             buff_len = buff.len();
         }
 
         if bytes.len() == 0 {
-            return None
+            return None;
         }
 
         // We need 4 bytes to be able to check the length of the data expected.
-        if bytes.len() < 4{
+        if bytes.len() < 4 {
             {
                 self.reader.consume(bytes.len());
                 total_consumed = bytes.len()
             }
 
-            let buff = self.reader.fill_buf().expect("Buffered read failed trying to read from file");
+            let buff = self
+                .reader
+                .fill_buf()
+                .expect("Buffered read failed trying to read from file");
             bytes.extend_from_slice(buff);
             buff_len = buff.len();
         }
 
-
         let data_size = (&bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
-        let framed_size = data_size + size_of_framing_bytes::<ByteType>(); 
+        let framed_size = data_size + size_of_framing_bytes::<ByteType>();
 
         while bytes.len() < framed_size {
             self.reader.consume(buff_len);
             total_consumed += buff_len;
-            let buff = self.reader.fill_buf().expect("Buffered read failed trying to read from file");
+            let buff = self
+                .reader
+                .fill_buf()
+                .expect("Buffered read failed trying to read from file");
             buff_len = buff.len();
 
             bytes.extend_from_slice(buff);
         }
 
-        self.offset_codec.decode(&mut bytes)
-            .map(|res|{
-                res.map(|data|{
-                    self.reader.consume(data.data_buffer.len() + size_of_framing_bytes::<ByteType>() - total_consumed );
+        self.offset_codec
+            .decode(&mut bytes)
+            .map(|res| {
+                res.map(|data| {
+                    self.reader.consume(
+                        data.data_buffer.len() + size_of_framing_bytes::<ByteType>()
+                            - total_consumed,
+                    );
                     data.data_buffer
                 })
             })
@@ -119,24 +130,22 @@ pub struct OffsetLogIter<'a, ByteType> {
     next_seq: u64,
 }
 
-impl<'a, ByteType> OffsetLogIter<'a, ByteType>{
-    pub fn new(log: &'a mut OffsetLog<ByteType>) -> OffsetLogIter<ByteType>{
-        OffsetLogIter{
-            log,
-            next_seq: 0
-        }
+impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
+    pub fn new(log: &'a mut OffsetLog<ByteType>) -> OffsetLogIter<ByteType> {
+        OffsetLogIter { log, next_seq: 0 }
     }
 }
 
-impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType>{
+impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
     type Item = Vec<u8>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         if self.next_seq >= self.log.offset_codec.length {
-            return None
+            return None;
         }
-        self.log.get(self.next_seq)
-            .map(|item|{
+        self.log
+            .get(self.next_seq)
+            .map(|item| {
                 self.next_seq += item.len() as u64 + size_of_framing_bytes::<ByteType>() as u64;
                 item
             })
@@ -146,7 +155,6 @@ impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType>{
 
 impl<ByteType> OffsetLog<ByteType> {
     pub fn new(path: String) -> OffsetLog<ByteType> {
-
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -160,52 +168,42 @@ impl<ByteType> OffsetLog<ByteType> {
 
         let offset_codec = OffsetCodec::<ByteType>::with_length(file_length);
 
-        OffsetLog{
-            offset_codec,
-            file
-        }
+        OffsetLog { offset_codec, file }
     }
-
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
-
-    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, ()>{
-        let mut buf = vec![0;4096]; //TODO need to allocate according to the size of the thing stored in there.
-        //IDEA: the hashview could be queried to find out how big the thing is.
-        self.file.seek(SeekFrom::Start(seq_num as u64))
-            .and_then(|_|{
-                self.file.read(&mut buf)
-            })
-            .and_then(|_|{
-                self.offset_codec.decode(&mut buf.into())
-            })
-            .map(|val| val.unwrap().data_buffer ) //TODO don't just unwrap here.
+    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, ()> {
+        let mut buf = vec![0; 4096]; //TODO need to allocate according to the size of the thing stored in there.
+                                     //IDEA: the hashview could be queried to find out how big the thing is.
+        self.file
+            .seek(SeekFrom::Start(seq_num as u64))
+            .and_then(|_| self.file.read(&mut buf))
+            .and_then(|_| self.offset_codec.decode(&mut buf.into()))
+            .map(|val| val.unwrap().data_buffer) //TODO don't just unwrap here.
             .map_err(|_| ())
-
     }
 
-    fn latest(&self) -> u64{
+    fn latest(&self) -> u64 {
         self.offset_codec.last_valid_offset
     }
 
-    fn append(& mut self, buff: &[u8]) -> Result<u64, ()>{
-        self.file.seek(SeekFrom::End(0)) // Could store a bool for is_at_end to avoid the sys call. If it is actually a sys call.
-            .and_then(|_|{
+    fn append(&mut self, buff: &[u8]) -> Result<u64, ()> {
+        self.file
+            .seek(SeekFrom::End(0)) // Could store a bool for is_at_end to avoid the sys call. If it is actually a sys call.
+            .and_then(|_| {
                 let mut vec = Vec::new();
                 vec.extend_from_slice(buff);
-                let mut encoded = BytesMut::with_capacity(size_of_framing_bytes::<ByteType>() + buff.len());
-                self.offset_codec.encode(vec, &mut encoded)
-                    .map(|_| encoded)
+                let mut encoded =
+                    BytesMut::with_capacity(size_of_framing_bytes::<ByteType>() + buff.len());
+                self.offset_codec.encode(vec, &mut encoded).map(|_| encoded)
             })
-            .and_then(|data|{
-                self.file.write(&data)
-            })
+            .and_then(|data| self.file.write(&data))
             .map(|len| self.offset_codec.length - len as u64)
             .or(Err(()))
     }
 
-    fn clear(&mut self, _seq_num: u64){
+    fn clear(&mut self, _seq_num: u64) {
         unimplemented!();
     }
 }
@@ -213,26 +211,28 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
 #[derive(Debug)]
 pub struct Data {
     pub data_buffer: Vec<u8>,
-    pub id: u64 
+    pub id: u64,
 }
 
-fn size_of_framing_bytes<T>() -> usize{
+fn size_of_framing_bytes<T>() -> usize {
     size_of::<u32>() * 2 + size_of::<T>()
 }
 
-fn is_valid_frame<T>(buf: & BytesMut, data_size: usize) -> bool {
+fn is_valid_frame<T>(buf: &BytesMut, data_size: usize) -> bool {
     let second_data_size_index = data_size + size_of::<u32>();
 
-    let second_data_size = (&buf[second_data_size_index..]).read_u32::<BigEndian>().unwrap() as usize;
+    let second_data_size = (&buf[second_data_size_index..])
+        .read_u32::<BigEndian>()
+        .unwrap() as usize;
 
-    second_data_size == data_size 
+    second_data_size == data_size
 }
 
 impl<ByteType> Encoder for OffsetCodec<ByteType> {
     type Item = Vec<u8>; //TODO make this a slice
     type Error = io::Error;
 
-    fn encode(&mut self, item: Self::Item, dest: &mut BytesMut)-> Result<(), Self::Error>{
+    fn encode(&mut self, item: Self::Item, dest: &mut BytesMut) -> Result<(), Self::Error> {
         let chunk_size = size_of_framing_bytes::<ByteType>() + item.len();
         dest.reserve(chunk_size);
         dest.put_u32_be(item.len() as u32);
@@ -243,7 +243,7 @@ impl<ByteType> Encoder for OffsetCodec<ByteType> {
         match size_of::<ByteType>() {
             4 => dest.put_u32_be(self.length as u32),
             8 => dest.put_u64_be(self.length as u64),
-            _ => panic!("Only supports 32 or 64 bit offset logs.") //TODO: Panicking here doesn't seem great.
+            _ => panic!("Only supports 32 or 64 bit offset logs."), //TODO: Panicking here doesn't seem great.
         }
 
         Ok(())
@@ -256,24 +256,31 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if buf.len() < size_of::<u32>() {
-            return Ok(None)
+            return Ok(None);
         }
         let data_size = (&buf[..]).read_u32::<BigEndian>().unwrap() as usize;
 
         if buf.len() < data_size + size_of_framing_bytes::<ByteType>() {
-            return Ok(None)
+            return Ok(None);
         }
 
-        if !is_valid_frame::<ByteType>(buf, data_size){
-            return Err(io::Error::new(io::ErrorKind::Other, "Frame values were incorrect. The database may be corrupt"))
+        if !is_valid_frame::<ByteType>(buf, data_size) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Frame values were incorrect. The database may be corrupt",
+            ));
         }
 
-        buf.advance(size_of::<u32>());//drop off one BytesType
+        buf.advance(size_of::<u32>()); //drop off one BytesType
         let data_buffer = buf.split_to(data_size);
-        buf.advance(size_of::<u32>() + size_of::<ByteType>());//drop off 2 ByteTypes.
-        let data = Data {data_buffer: data_buffer.to_vec(), id: self.last_valid_offset };
+        buf.advance(size_of::<u32>() + size_of::<ByteType>()); //drop off 2 ByteTypes.
+        let data = Data {
+            data_buffer: data_buffer.to_vec(),
+            id: self.last_valid_offset,
+        };
 
-        let next_offset = self.last_valid_offset + size_of_framing_bytes::<ByteType>() as u64 + data_size as u64;
+        let next_offset =
+            self.last_valid_offset + size_of_framing_bytes::<ByteType>() as u64 + data_size as u64;
         self.last_valid_offset = next_offset;
 
         Ok(Some(data))
@@ -284,186 +291,204 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
     }
 }
 
-
-#[cfg(test)]    
+#[cfg(test)]
 mod test {
-    use offset_log::{Decoder, Encoder};
-    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter, OffsetLogBufIter};
+    use bytes::BytesMut;
     use flume_log::FlumeLog;
-    use bytes::{BytesMut};
+    use offset_log::{Decoder, Encoder};
+    use offset_log::{OffsetCodec, OffsetLog, OffsetLogBufIter, OffsetLogIter};
     use serde_json::*;
 
     #[test]
-    fn simple_encode(){
+    fn simple_encode() {
         let mut codec = OffsetCodec::<u32>::new();
-        let to_encode = vec![1,2,3,4];
+        let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(16);
         codec.encode(to_encode, &mut buf).unwrap();
 
-        assert_eq!(&buf[..], &[0,0,0,4,  1,2,3,4, 0,0,0,4, 0,0,0,16])
+        assert_eq!(&buf[..], &[0, 0, 0, 4, 1, 2, 3, 4, 0, 0, 0, 4, 0, 0, 0, 16])
     }
 
     #[test]
-    fn simple_encode_u64(){
+    fn simple_encode_u64() {
         let mut codec = OffsetCodec::<u64>::new();
-        let to_encode = vec![1,2,3,4];
+        let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(20);
         codec.encode(to_encode, &mut buf).unwrap();
 
-        assert_eq!(&buf[..], &[0,0,0,4,  1,2,3,4, 0,0,0,4, 0,0,0,0,0,0,0,20])
+        assert_eq!(
+            &buf[..],
+            &[0, 0, 0, 4, 1, 2, 3, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 20]
+        )
     }
 
     #[test]
-    fn encode_multi(){
+    fn encode_multi() {
         let mut codec = OffsetCodec::<u32>::new();
-        let to_encode = vec![1,2,3,4];
+        let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(32);
         codec.encode(to_encode, &mut buf).unwrap();
-        let to_encode = vec![5,6,7,8];
+        let to_encode = vec![5, 6, 7, 8];
         codec.encode(to_encode, &mut buf).unwrap();
 
-        assert_eq!(&buf[..], &[0,0,0,4,  1,2,3,4, 0,0,0,4, 0,0,0,16, 0,0,0,4, 5,6,7,8, 0,0,0,4, 0,0,0,32])
+        assert_eq!(
+            &buf[..],
+            &[
+                0, 0, 0, 4, 1, 2, 3, 4, 0, 0, 0, 4, 0, 0, 0, 16, 0, 0, 0, 4, 5, 6, 7, 8, 0, 0, 0,
+                4, 0, 0, 0, 32
+            ]
+        )
     }
     #[test]
-    fn encode_multi_u64(){
+    fn encode_multi_u64() {
         let mut codec = OffsetCodec::<u64>::new();
-        let to_encode = vec![1,2,3,4];
+        let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(40);
         codec.encode(to_encode, &mut buf).unwrap();
-        let to_encode = vec![5,6,7,8];
+        let to_encode = vec![5, 6, 7, 8];
         codec.encode(to_encode, &mut buf).unwrap();
 
-        assert_eq!(&buf[0..20], &[0,0,0,4, 1,2,3,4, 0,0,0,4, 0,0,0,0,0,0,0,20]);
-        assert_eq!(&buf[20..], &[0,0,0,4, 5,6,7,8, 0,0,0,4, 0,0,0,0,0,0,0,40])
+        assert_eq!(
+            &buf[0..20],
+            &[0, 0, 0, 4, 1, 2, 3, 4, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 20]
+        );
+        assert_eq!(
+            &buf[20..],
+            &[0, 0, 0, 4, 5, 6, 7, 8, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 40]
+        )
     }
     #[test]
-    fn simple(){
+    fn simple() {
         let mut codec = OffsetCodec::<u32>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,8, 0,0,0,20];
+        let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
         let result = codec.decode(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(Some(data)) => {
                 assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1,2,3,4,5,6,7,8]);
-            },
-            _ => assert!(false)
+                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            _ => assert!(false),
         }
     }
     #[test]
-    fn simple_u64(){
+    fn simple_u64() {
         let mut codec = OffsetCodec::<u64>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,8, 0,0,0,0,0,0,0,24];
+        let frame_bytes: &[u8] = &[
+            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24,
+        ];
         let result = codec.decode(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(Some(data)) => {
                 assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1,2,3,4,5,6,7,8]);
-            },
-            _ => assert!(false)
+                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            _ => assert!(false),
         }
     }
     #[test]
-    fn mulitple(){
+    fn mulitple() {
         let mut codec = OffsetCodec::<u32>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,8, 0,0,0,20,  0,0,0,8, 9,10,11,12,13,14,15,16, 0,0,0,8, 0,0,0,40];
+        let frame_bytes: &[u8] = &[
+            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 9, 10, 11, 12,
+            13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40,
+        ];
         let mut bytes = BytesMut::from(frame_bytes);
-        let result1 = codec.decode(&mut bytes );
+        let result1 = codec.decode(&mut bytes);
 
         match result1 {
             Ok(Some(data)) => {
                 assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1,2,3,4,5,6,7,8]);
-            },
-            _ => assert!(false)
+                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            _ => assert!(false),
         }
         let result2 = codec.decode(&mut bytes);
 
         match result2 {
             Ok(Some(data)) => {
                 assert_eq!(data.id, 20);
-                assert_eq!(&data.data_buffer, &[9,10,11,12,13,14,15,16]);
-            },
-            _ => assert!(false)
+                assert_eq!(&data.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+            }
+            _ => assert!(false),
         }
     }
     #[test]
-    fn mulitple_u64(){
+    fn mulitple_u64() {
         let mut codec = OffsetCodec::<u64>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,8, 0,0,0,0,0,0,0,24,  0,0,0,8, 9,10,11,12,13,14,15,16, 0,0,0,8, 0,0,0,0,0,0,0,48];
+        let frame_bytes: &[u8] = &[
+            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 8, 9,
+            10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48,
+        ];
         let mut bytes = BytesMut::from(frame_bytes);
-        let result1 = codec.decode(&mut bytes );
+        let result1 = codec.decode(&mut bytes);
 
         match result1 {
             Ok(Some(data)) => {
                 assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1,2,3,4,5,6,7,8]);
-            },
-            _ => assert!(false)
+                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            }
+            _ => assert!(false),
         }
         let result2 = codec.decode(&mut bytes);
 
         match result2 {
             Ok(Some(data)) => {
                 assert_eq!(data.id, 24);
-                assert_eq!(&data.data_buffer, &[9,10,11,12,13,14,15,16]);
-            },
-            _ => assert!(false)
+                assert_eq!(&data.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+            }
+            _ => assert!(false),
         }
     }
     #[test]
-    fn returns_ok_none_when_buffer_is_incomplete_frame(){
+    fn returns_ok_none_when_buffer_is_incomplete_frame() {
         let mut codec = OffsetCodec::<u32>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,9, 0,0,0];
+        let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0];
         let result = codec.decode(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(None) => assert!(true),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
     #[test]
-    fn returns_ok_none_when_buffer_less_than_4_bytes(){
+    fn returns_ok_none_when_buffer_less_than_4_bytes() {
         let mut codec = OffsetCodec::<u32>::new();
-        let frame_bytes: &[u8] = &[0,0,0];
+        let frame_bytes: &[u8] = &[0, 0, 0];
         let result = codec.decode(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(None) => assert!(true),
-            _ => assert!(false)
+            _ => assert!(false),
         }
     }
     #[test]
-    fn errors_with_bad_second_size_value(){
+    fn errors_with_bad_second_size_value() {
         let mut codec = OffsetCodec::<u32>::new();
-        let frame_bytes: &[u8] = &[0,0,0,8, 1,2,3,4,5,6,7,8, 0,0,0,9, 0,0,0,20];
+        let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0, 20];
         let result = codec.decode(&mut BytesMut::from(frame_bytes));
 
         match result {
-            Ok(Some(_)) => {
-                assert!(false)
-            },
-            _ => assert!(true)
+            Ok(Some(_)) => assert!(false),
+            _ => assert!(true),
         }
     }
     #[test]
-    fn read_from_a_file(){
+    fn read_from_a_file() {
         let mut offset_log = OffsetLog::<u32>::new("./db/test".to_string());
-        let result = offset_log.get(0)
+        let result = offset_log
+            .get(0)
             .and_then(|val| from_slice(&val).or(Err(())))
-            .map(|val: Value| { 
-                match val["value"] {
-                    Value::Number(ref num) => num.as_u64().unwrap(),
-                    _ => panic!()
-                }
-            
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => num.as_u64().unwrap(),
+                _ => panic!(),
             })
             .unwrap();
-        assert_eq!(result , 0);
+        assert_eq!(result, 0);
     }
     #[test]
-    fn write_to_a_file(){
+    fn write_to_a_file() {
         let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
@@ -472,24 +497,22 @@ mod test {
         let test_vec = b"{\"value\": 1}";
 
         let mut offset_log = OffsetLog::<u32>::new(filename);
-        let result = offset_log.append(test_vec)
+        let result = offset_log
+            .append(test_vec)
             .and_then(|_| offset_log.get(0))
             .and_then(|val| from_slice(&val).or(Err(())))
-            .map(|val: Value| { 
-                match val["value"] {
-                    Value::Number(ref num) => {
-                        let result = num.as_u64().unwrap();
-                        result
-                    },
-                    _ => panic!()
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => {
+                    let result = num.as_u64().unwrap();
+                    result
                 }
-            
+                _ => panic!(),
             })
             .unwrap();
-        assert_eq!(result , 1);
+        assert_eq!(result, 1);
     }
     #[test]
-    fn arbitrary_read_and_write_to_a_file(){
+    fn arbitrary_read_and_write_to_a_file() {
         let filename = "/tmp/test124.offset".to_string(); //careful not to reuse this filename, threads might make things weird
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
@@ -497,13 +520,11 @@ mod test {
 
         let mut offset_log = OffsetLog::<u32>::new(filename);
 
-        let data_to_write = vec![b"{\"value\": 1}", b"{\"value\": 2}", b"{\"value\": 3}" ];
+        let data_to_write = vec![b"{\"value\": 1}", b"{\"value\": 2}", b"{\"value\": 3}"];
 
         let seqs: Vec<u64> = data_to_write
             .iter()
-            .map(|data| {
-                offset_log.append(*data).unwrap()
-            })
+            .map(|data| offset_log.append(*data).unwrap())
             .collect();
 
         let sum: u64 = seqs
@@ -511,23 +532,20 @@ mod test {
             .rev()
             .map(|seq| offset_log.get(*seq).unwrap())
             .map(|val| from_slice(&val).unwrap())
-            .map(|val: Value| { 
-                match val["value"] {
-                    Value::Number(ref num) => {
-                        let result = num.as_u64().unwrap();
-                        result
-                    },
-                    _ => panic!()
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => {
+                    let result = num.as_u64().unwrap();
+                    result
                 }
-            
+                _ => panic!(),
             })
             .sum();
 
-        assert_eq!(sum , 6);
+        assert_eq!(sum, 6);
     }
 
     #[test]
-    fn offset_log_as_iter(){
+    fn offset_log_as_iter() {
         let filename = "./db/test".to_string();
 
         let mut offset_log = OffsetLog::<u32>::new(filename);
@@ -537,23 +555,19 @@ mod test {
         let sum: u64 = log_iter
             .take(5)
             .map(|val| from_slice(&val).unwrap())
-            .map(|val: Value| { 
-                match val["value"] {
-                    Value::Number(ref num) => {
-                        let result = num.as_u64().unwrap();
-                        result
-                    },
-                    _ => panic!()
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => {
+                    let result = num.as_u64().unwrap();
+                    result
                 }
-            
+                _ => panic!(),
             })
             .sum();
 
-        assert_eq!(sum , 10);
+        assert_eq!(sum, 10);
     }
     #[test]
-    fn offset_log_as_buf_iter(){
-
+    fn offset_log_as_buf_iter() {
         let filename = "./db/test".to_string();
         let file = std::fs::File::open(filename).unwrap();
 
@@ -562,19 +576,16 @@ mod test {
         let sum: u64 = log_iter
             .take(5)
             .map(|val| from_slice(&val).unwrap())
-            .map(|val: Value| { 
-                match val["value"] {
-                    Value::Number(ref num) => {
-                        let result = num.as_u64().unwrap();
-                        result
-                    },
-                    _ => panic!()
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => {
+                    let result = num.as_u64().unwrap();
+                    result
                 }
-            
+                _ => panic!(),
             })
             .sum();
 
-        assert_eq!(sum , 10);
+        assert_eq!(sum, 10);
     }
 
 }
