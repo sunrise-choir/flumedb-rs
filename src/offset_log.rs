@@ -448,7 +448,7 @@ mod test {
     }
     #[test]
     fn read_from_a_file() {
-        let mut offset_log = OffsetLog::<u32>::new("./db/test".to_string());
+        let mut offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
         let result = offset_log
             .get(0)
             .and_then(|val| from_slice(&val).or(Err(())))
@@ -518,7 +518,7 @@ mod test {
 
     #[test]
     fn offset_log_as_iter() {
-        let filename = "./db/test".to_string();
+        let filename = "./db/test.offset".to_string();
         let file = std::fs::File::open(filename).unwrap();
 
         let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);

@@ -10,9 +10,8 @@ extern crate byteorder;
 extern crate bytes;
 extern crate flumedb;
 extern crate tokio;
-extern crate tokio_codec;
-extern crate tokio_fs;
 extern crate tokio_io;
+extern crate tokio_codec;
 
 use bytes::BytesMut;
 use flumedb::flume_log::FlumeLog;
@@ -20,9 +19,6 @@ use flumedb::mem_log::MemLog;
 use flumedb::offset_log::OffsetCodec;
 use flumedb::offset_log::*;
 use serde_json::{from_slice, Value};
-use tokio::fs::File;
-use tokio::prelude::*;
-use tokio_codec::Framed;
 use tokio_io::codec::Decoder;
 
 const NUM_ENTRIES: u32 = 10000;
@@ -80,10 +76,22 @@ fn offset_log_get(b: &mut Bencher) {
 }
 
 fn offset_log_iter(b: &mut Bencher) {
-    b.iter(|| {
-        let filename = "./db/test".to_string();
-        let file = std::fs::File::open(filename).unwrap();
+    let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
+    std::fs::remove_file(filename.clone()).unwrap_or(());
 
+    let test_vec = b"{\"value\": 1}";
+
+    let mut offset_log = OffsetLog::<u32>::new(filename.clone());
+
+    let offsets: Vec<u64> = (0..NUM_ENTRIES)
+        .map(|_| offset_log.append(test_vec).unwrap())
+        .collect();
+
+    assert_eq!(offsets.len(), NUM_ENTRIES as usize);
+
+    b.iter(|| {
+
+        let file = std::fs::File::open(filename.clone()).unwrap();
         let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
 
         let sum: u64 = log_iter
@@ -95,7 +103,7 @@ fn offset_log_iter(b: &mut Bencher) {
                 }
                 _ => panic!(),
             })
-            .sum();
+        .sum();
 
         assert!(sum > 0);
     })
@@ -157,40 +165,6 @@ fn mem_log_iter(b: &mut Bencher) {
         assert!(sum > 0);
     })
 }
-
-fn tokio_reduce_offset_log(b: &mut Bencher) {
-    b.iter(|| {
-        let stream = File::open("./db/test")
-            .then(|result| match result {
-                Ok(f) => {
-                    let reads = Framed::new(f, OffsetCodec::<u32>::new())
-                        .map(|val| {
-                            let jsn: Value = serde_json::from_slice(&val.data_buffer).unwrap();
-                            match jsn["value"] {
-                                Value::Number(ref num) => num.as_u64().unwrap(),
-                                _ => 0,
-                            }
-                        })
-                        .fold(0, |sum, num| Ok::<_, std::io::Error>(sum + num));
-                    Ok(reads)
-                }
-                Err(e) => {
-                    println!("error {}", e);
-                    Err(e)
-                }
-            })
-            .then(|result| {
-                tokio::spawn(result.unwrap().then(|res| {
-                    assert!(res.unwrap() > 0);
-                    //println!("res was {}", res.unwrap());
-                    Ok(())
-                }))
-            });
-
-        tokio::run(stream);
-    });
-}
-
 benchmark_group!(
     offset_log,
     offset_log_get,
@@ -199,6 +173,5 @@ benchmark_group!(
     offset_log_decode
 );
 benchmark_group!(mem_log, mem_log_get, mem_log_append, mem_log_iter);
-benchmark_group!(tokio, tokio_reduce_offset_log);
 
 benchmark_main!(offset_log, mem_log);
