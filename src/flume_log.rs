@@ -14,10 +14,12 @@ pub enum FlumeLogError {
     SequenceNotFound { sequence: u64 },
 }
 
+type Sequence = u64;
+
 pub trait FlumeLog {
     //TODO: errors.
-    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, Error>;
-    fn clear(&mut self, seq_num: u64);
-    fn latest(&self) -> u64;
-    fn append(&mut self, buff: &[u8]) -> Result<u64, Error>;
+    fn get(&mut self, seq: Sequence) -> Result<Vec<u8>, Error>;
+    fn clear(&mut self, seq: Sequence);
+    fn latest(&self) -> Sequence;
+    fn append(&mut self, buff: &[u8]) -> Result<Sequence, Error>;
 }

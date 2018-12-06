@@ -150,13 +150,19 @@ impl<ByteType> OffsetLog<ByteType> {
 
         OffsetLog { offset_codec, file }
     }
-    pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<u64, Error> {
+    pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
         let bytes = BytesMut::new();
+        let mut offsets = Vec::<u64>::new();
 
         let encoded = buffs.iter().try_fold(bytes, |mut acc, buff| {
             let mut vec = Vec::new();
+
+            offsets.push(self.offset_codec.length);
             vec.extend_from_slice(buff);
-            self.offset_codec.encode(vec, &mut acc).map(|_| acc)
+            self.offset_codec.encode(vec, &mut acc).map(|_| { 
+
+                acc
+            })
         })?;
 
         self.file.seek(SeekFrom::End(0))?;
@@ -166,7 +172,7 @@ impl<ByteType> OffsetLog<ByteType> {
         //TODO: Think this should be an array of seqs
         //.map(|len| self.offset_codec.length - len as u64)
 
-        Ok(0)
+        Ok(offsets)
     }
 }
 
@@ -296,7 +302,7 @@ mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
     use offset_log::{Decoder, Encoder};
-    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter};
+    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter, size_of_framing_bytes};
     use serde_json::*;
 
     #[test]
@@ -529,7 +535,12 @@ mod test {
         let mut offset_log = OffsetLog::<u32>::new(filename);
         let result = offset_log
             .append_batch(test_vecs.as_slice())
-            .and_then(|_| offset_log.get(0))
+            .and_then(|sequences| {
+                assert_eq!(sequences.len(), test_vecs.len());
+                assert_eq!(sequences[0], 0);
+                assert_eq!(sequences[1], test_vec.len() as u64 + size_of_framing_bytes::<u32>() as u64);
+                offset_log.get(0)
+            })
             .and_then(|val| from_slice(&val).map_err(|err| err.into()))
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
