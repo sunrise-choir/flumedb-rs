@@ -50,5 +50,13 @@
   - work with him to figure out the alternative.
 
   - alj , mikey, mix, cel, matt.
+
+  - possible view implementations:
+    - mfr queries => boxed thing that takes an iter and returns you a Type that is the built view.
+      - this is good because there aren't heaps of js objects crossing the js / rust boundary.
+      - could be an easy add to flume as a reader, not writer.
+      - what things use flumeview-reduce? Which ones are important and could be ported to rust?
+
+    
  
 
