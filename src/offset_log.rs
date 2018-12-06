@@ -288,7 +288,6 @@ mod test {
     use offset_log::{Decoder, Encoder};
     use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter};
     use serde_json::*;
-    use failure::Error;
 
     #[test]
     fn simple_encode() {
