@@ -145,22 +145,32 @@ impl<ByteType> OffsetLog<ByteType> {
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
-    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, ()> {
-        let mut buf = vec![0; 4096]; //TODO need to allocate according to the size of the thing stored in there.
-                                     //IDEA: the hashview could be queried to find out how big the thing is.
-        self.file
-            .seek(SeekFrom::Start(seq_num as u64))
-            .and_then(|_| self.file.read(&mut buf))
-            .and_then(|_| self.offset_codec.decode(&mut buf.into()))
-            .map(|val| val.unwrap().data_buffer) //TODO don't just unwrap here.
-            .map_err(|_| ())
+    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, Error> {
+
+        let mut frame_bytes = vec![0; 4];
+
+        self.file.seek(SeekFrom::Start(seq_num as u64))?;
+        self.file.read(&mut frame_bytes)?;
+
+        let data_size = size_of_framing_bytes::<ByteType>() + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
+
+        let mut buf = Vec::with_capacity(data_size);
+        unsafe{buf.set_len(data_size)};
+
+        self.file.seek(SeekFrom::Start(seq_num as u64))?;
+        self.file.read(&mut buf)?;
+        self.offset_codec.decode(&mut buf.into())?
+            .map(|val|{
+                val.data_buffer
+            })
+            .ok_or(FlumeOffsetLogError::DecodeBufferSizeTooSmall{}.into())
     }
 
     fn latest(&self) -> u64 {
         self.offset_codec.last_valid_offset
     }
 
-    fn append(&mut self, buff: &[u8]) -> Result<u64, ()> {
+    fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
         self.file
             .seek(SeekFrom::End(0)) // Could store a bool for is_at_end to avoid the sys call. If it is actually a sys call.
             .and_then(|_| {
@@ -172,7 +182,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
             })
             .and_then(|data| self.file.write(&data))
             .map(|len| self.offset_codec.length - len as u64)
-            .or(Err(()))
+            .map_err(|err| err.into())
     }
 
     fn clear(&mut self, _seq_num: u64) {
@@ -222,9 +232,20 @@ impl<ByteType> Encoder for OffsetCodec<ByteType> {
     }
 }
 
+#[derive(Debug, Fail)]
+pub enum FlumeOffsetLogError {
+    #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
+    CorruptLogFile {
+    },
+    #[fail(display = "The decode buffer passes to decode was too small")]
+    DecodeBufferSizeTooSmall{
+    
+    }
+}
+
 impl<ByteType> Decoder for OffsetCodec<ByteType> {
     type Item = Data;
-    type Error = io::Error;
+    type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if buf.len() < size_of::<u32>() {
@@ -237,10 +258,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
         }
 
         if !is_valid_frame::<ByteType>(buf, data_size) {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Frame values were incorrect. The database may be corrupt",
-            ));
+            return Err(FlumeOffsetLogError::CorruptLogFile{}.into());
         }
 
         buf.advance(size_of::<u32>()); //drop off one BytesType
@@ -270,6 +288,7 @@ mod test {
     use offset_log::{Decoder, Encoder};
     use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter};
     use serde_json::*;
+    use failure::Error;
 
     #[test]
     fn simple_encode() {
@@ -451,7 +470,10 @@ mod test {
         let mut offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
         let result = offset_log
             .get(0)
-            .and_then(|val| from_slice(&val).or(Err(())))
+            .and_then(|val| {
+                from_slice(&val)
+                    .map_err(|err| err.into())
+            })
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => num.as_u64().unwrap(),
                 _ => panic!(),
@@ -472,7 +494,10 @@ mod test {
         let result = offset_log
             .append(test_vec)
             .and_then(|_| offset_log.get(0))
-            .and_then(|val| from_slice(&val).or(Err(())))
+            .and_then(|val| {
+                from_slice(&val)
+                    .map_err(|err| err.into())
+            })
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
                     let result = num.as_u64().unwrap();

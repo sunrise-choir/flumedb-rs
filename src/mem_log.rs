@@ -15,9 +15,10 @@ impl MemLog {
 
 impl FlumeLog for MemLog {
     //TODO: errors.
-    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, ()> {
-        let slice = self.log.get(seq_num as usize).ok_or(())?;
-        Ok(slice.clone())
+    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, Error> {
+        self.log.get(seq_num as usize)
+            .map(|slice| slice.clone())
+            .ok_or(FlumeLogError::SequenceNotFound{sequence: seq_num}.into())
     }
     fn clear(&mut self, seq: u64) {
         self.log[seq as usize] = Vec::new();
@@ -25,7 +26,7 @@ impl FlumeLog for MemLog {
     fn latest(&self) -> u64 {
         self.log.len() as u64
     }
-    fn append(&mut self, buff: &[u8]) -> Result<u64, ()> {
+    fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
         let seq = self.latest();
         let mut vec = Vec::new();
         vec.extend_from_slice(buff);
