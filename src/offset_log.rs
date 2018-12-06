@@ -161,10 +161,7 @@ impl<ByteType> OffsetLog<ByteType> {
             //imperative.
             offsets.push(self.offset_codec.length);
             vec.extend_from_slice(buff);
-            self.offset_codec.encode(vec, &mut acc).map(|_| { 
-
-                acc
-            })
+            self.offset_codec.encode(vec, &mut acc).map(|_| acc)
         })?;
 
         self.file.seek(SeekFrom::End(0))?;
@@ -299,8 +296,8 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
+    use offset_log::{size_of_framing_bytes, OffsetCodec, OffsetLog, OffsetLogIter};
     use offset_log::{Decoder, Encoder};
-    use offset_log::{OffsetCodec, OffsetLog, OffsetLogIter, size_of_framing_bytes};
     use serde_json::*;
 
     #[test]
@@ -536,7 +533,10 @@ mod test {
             .and_then(|sequences| {
                 assert_eq!(sequences.len(), test_vecs.len());
                 assert_eq!(sequences[0], 0);
-                assert_eq!(sequences[1], test_vec.len() as u64 + size_of_framing_bytes::<u32>() as u64);
+                assert_eq!(
+                    sequences[1],
+                    test_vec.len() as u64 + size_of_framing_bytes::<u32>() as u64
+                );
                 offset_log.get(0)
             })
             .and_then(|val| from_slice(&val).map_err(|err| err.into()))
