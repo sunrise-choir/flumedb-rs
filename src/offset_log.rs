@@ -231,7 +231,7 @@ impl<ByteType> Encoder for OffsetCodec<ByteType> {
 pub enum FlumeOffsetLogError {
     #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
     CorruptLogFile {},
-    #[fail(display = "The decode buffer passes to decode was too small")]
+    #[fail(display = "The decode buffer passed to decode was too small")]
     DecodeBufferSizeTooSmall {},
 }
 
