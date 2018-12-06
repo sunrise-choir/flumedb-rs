@@ -15,6 +15,14 @@ pub struct OffsetCodec<ByteType> {
     byte_type: PhantomData<ByteType>,
 }
 
+#[derive(Debug, Fail)]
+pub enum FlumeOffsetLogError {
+    #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
+    CorruptLogFile {},
+    #[fail(display = "The decode buffer passed to decode was too small")]
+    DecodeBufferSizeTooSmall {},
+}
+
 impl<ByteType> OffsetCodec<ByteType> {
     pub fn new() -> OffsetCodec<ByteType> {
         OffsetCodec {
@@ -142,6 +150,24 @@ impl<ByteType> OffsetLog<ByteType> {
 
         OffsetLog { offset_codec, file }
     }
+    pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<u64, Error> {
+        let bytes = BytesMut::new();
+
+        let encoded = buffs.iter().try_fold(bytes, |mut acc, buff| {
+            let mut vec = Vec::new();
+            vec.extend_from_slice(buff);
+            self.offset_codec.encode(vec, &mut acc).map(|_| acc)
+        })?;
+
+        self.file.seek(SeekFrom::End(0))?;
+        self.file.write(&encoded)?;
+
+        //TODO: ~~~~~~RETURN A LENGTH HERE~~~~~
+        //TODO: Think this should be an array of seqs
+        //.map(|len| self.offset_codec.length - len as u64)
+
+        Ok(0)
+    }
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
@@ -225,14 +251,6 @@ impl<ByteType> Encoder for OffsetCodec<ByteType> {
 
         Ok(())
     }
-}
-
-#[derive(Debug, Fail)]
-pub enum FlumeOffsetLogError {
-    #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
-    CorruptLogFile {},
-    #[fail(display = "The decode buffer passed to decode was too small")]
-    DecodeBufferSizeTooSmall {},
 }
 
 impl<ByteType> Decoder for OffsetCodec<ByteType> {
@@ -481,6 +499,36 @@ mod test {
         let mut offset_log = OffsetLog::<u32>::new(filename);
         let result = offset_log
             .append(test_vec)
+            .and_then(|_| offset_log.get(0))
+            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => {
+                    let result = num.as_u64().unwrap();
+                    result
+                }
+                _ => panic!(),
+            })
+            .unwrap();
+        assert_eq!(result, 1);
+    }
+    #[test]
+    fn batch_write_to_a_file() {
+        let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
+        std::fs::remove_file(filename.clone())
+            .or::<Result<()>>(Ok(()))
+            .unwrap();
+
+        let test_vec: &[u8] = b"{\"value\": 1}";
+
+        let mut test_vecs = Vec::new();
+
+        for _ in 0..100 {
+            test_vecs.push(test_vec);
+        }
+
+        let mut offset_log = OffsetLog::<u32>::new(filename);
+        let result = offset_log
+            .append_batch(test_vecs.as_slice())
             .and_then(|_| offset_log.get(0))
             .and_then(|val| from_slice(&val).map_err(|err| err.into()))
             .map(|val: Value| match val["value"] {

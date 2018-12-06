@@ -53,6 +53,26 @@ fn offset_log_append(b: &mut Bencher) {
     })
 }
 
+fn offset_log_append_batch(b: &mut Bencher) {
+    let test_vec: &[u8] = b"{\"value\": 1}";
+
+    let mut test_vecs = Vec::new();
+
+    for _ in 0..NUM_ENTRIES {
+        test_vecs.push(test_vec);
+    }
+
+    b.iter(|| {
+        let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
+        std::fs::remove_file(filename.clone()).unwrap_or(());
+
+        let mut offset_log = OffsetLog::<u32>::new(filename);
+
+        let result = offset_log.append_batch(&test_vecs).unwrap();
+
+        assert_eq!(result, 0);
+    })
+}
 fn offset_log_get(b: &mut Bencher) {
     let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
     std::fs::remove_file(filename.clone()).unwrap_or(());
@@ -166,6 +186,7 @@ benchmark_group!(
     offset_log,
     offset_log_get,
     offset_log_append,
+    offset_log_append_batch,
     offset_log_iter,
     offset_log_decode
 );
