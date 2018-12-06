@@ -221,11 +221,7 @@ impl<ByteType> Encoder for OffsetCodec<ByteType> {
         dest.put_u32_be(item.len() as u32);
         self.length += chunk_size as u64;
 
-        match size_of::<ByteType>() {
-            4 => dest.put_u32_be(self.length as u32),
-            8 => dest.put_u64_be(self.length as u64),
-            _ => panic!("Only supports 32 or 64 bit offset logs."), //TODO: Panicking here doesn't seem great.
-        }
+        dest.put_uint_be(self.length.into(), size_of::<ByteType>());
 
         Ok(())
     }
