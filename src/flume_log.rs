@@ -11,11 +11,8 @@ pub struct StreamOpts {
 #[derive(Debug, Fail)]
 pub enum FlumeLogError {
     #[fail(display = "Unable to find sequence: {}", sequence)]
-    SequenceNotFound {
-        sequence: u64,
-    },
+    SequenceNotFound { sequence: u64 },
 }
-
 
 pub trait FlumeLog {
     //TODO: errors.

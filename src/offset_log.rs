@@ -146,24 +146,23 @@ impl<ByteType> OffsetLog<ByteType> {
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
     fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, Error> {
-
         let mut frame_bytes = vec![0; 4];
 
         self.file.seek(SeekFrom::Start(seq_num as u64))?;
         self.file.read(&mut frame_bytes)?;
 
-        let data_size = size_of_framing_bytes::<ByteType>() + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
+        let data_size = size_of_framing_bytes::<ByteType>()
+            + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
 
         let mut buf = Vec::with_capacity(data_size);
-        unsafe{buf.set_len(data_size)};
+        unsafe { buf.set_len(data_size) };
 
         self.file.seek(SeekFrom::Start(seq_num as u64))?;
         self.file.read(&mut buf)?;
-        self.offset_codec.decode(&mut buf.into())?
-            .map(|val|{
-                val.data_buffer
-            })
-            .ok_or(FlumeOffsetLogError::DecodeBufferSizeTooSmall{}.into())
+        self.offset_codec
+            .decode(&mut buf.into())?
+            .map(|val| val.data_buffer)
+            .ok_or(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into())
     }
 
     fn latest(&self) -> u64 {
@@ -235,12 +234,9 @@ impl<ByteType> Encoder for OffsetCodec<ByteType> {
 #[derive(Debug, Fail)]
 pub enum FlumeOffsetLogError {
     #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
-    CorruptLogFile {
-    },
+    CorruptLogFile {},
     #[fail(display = "The decode buffer passes to decode was too small")]
-    DecodeBufferSizeTooSmall{
-    
-    }
+    DecodeBufferSizeTooSmall {},
 }
 
 impl<ByteType> Decoder for OffsetCodec<ByteType> {
@@ -258,7 +254,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
         }
 
         if !is_valid_frame::<ByteType>(buf, data_size) {
-            return Err(FlumeOffsetLogError::CorruptLogFile{}.into());
+            return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
         }
 
         buf.advance(size_of::<u32>()); //drop off one BytesType
@@ -469,10 +465,7 @@ mod test {
         let mut offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
         let result = offset_log
             .get(0)
-            .and_then(|val| {
-                from_slice(&val)
-                    .map_err(|err| err.into())
-            })
+            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => num.as_u64().unwrap(),
                 _ => panic!(),
@@ -493,10 +486,7 @@ mod test {
         let result = offset_log
             .append(test_vec)
             .and_then(|_| offset_log.get(0))
-            .and_then(|val| {
-                from_slice(&val)
-                    .map_err(|err| err.into())
-            })
+            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
                     let result = num.as_u64().unwrap();

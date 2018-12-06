@@ -88,7 +88,6 @@ fn offset_log_iter(b: &mut Bencher) {
     assert_eq!(offsets.len(), NUM_ENTRIES as usize);
 
     b.iter(|| {
-
         let file = std::fs::File::open(filename.clone()).unwrap();
         let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
 
@@ -101,7 +100,7 @@ fn offset_log_iter(b: &mut Bencher) {
                 }
                 _ => panic!(),
             })
-        .sum();
+            .sum();
 
         assert!(sum > 0);
     })
