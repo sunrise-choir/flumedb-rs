@@ -157,6 +157,8 @@ impl<ByteType> OffsetLog<ByteType> {
         let encoded = buffs.iter().try_fold(bytes, |mut acc, buff| {
             let mut vec = Vec::new();
 
+            //Maybe there's a more functional way of doing this. Kinda mixing functional and
+            //imperative.
             offsets.push(self.offset_codec.length);
             vec.extend_from_slice(buff);
             self.offset_codec.encode(vec, &mut acc).map(|_| { 
@@ -167,10 +169,6 @@ impl<ByteType> OffsetLog<ByteType> {
 
         self.file.seek(SeekFrom::End(0))?;
         self.file.write(&encoded)?;
-
-        //TODO: ~~~~~~RETURN A LENGTH HERE~~~~~
-        //TODO: Think this should be an array of seqs
-        //.map(|len| self.offset_codec.length - len as u64)
 
         Ok(offsets)
     }
