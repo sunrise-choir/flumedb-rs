@@ -1,4 +1,5 @@
 use flume_view::*;
+use failure::Error;
 
 use rusqlite::{Connection, NO_PARAMS};
 use serde_json::Value;
@@ -56,6 +57,15 @@ impl FlumeViewSql {
         create_tables(&mut connection);
 
         FlumeViewSql { connection, latest }
+    }
+
+    pub fn get_seq_by_key(&mut self, key: String) -> Result<i64, Error> {
+        let mut stmt = self.connection.prepare("SELECT id FROM message WHERE key=?1").unwrap();
+
+        stmt.query_row(&[key], |row|{
+            row.get(0)
+        })
+        .map_err(|err| err.into())
     }
 }
 
@@ -124,6 +134,7 @@ mod test {
 
     #[test]
     fn append(){
+        let expected_seq = 1234;
         let filename = "/tmp/test.sqlite3";
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
@@ -156,6 +167,8 @@ mod test {
   "timestamp": 1543959001933
 }
 "#####;
-        view.append(0, jsn.as_bytes());
+        view.append(expected_seq, jsn.as_bytes());
+        let seq = view.get_seq_by_key("%KKPLj1tWfuVhCvgJz2hG/nIsVzmBRzUJaqHv+sb+n1c=.sha256".to_string()).unwrap();
+        assert_eq!(seq, expected_seq as i64);
     }
 }
