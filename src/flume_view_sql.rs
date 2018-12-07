@@ -105,7 +105,7 @@ impl FlumeView for FlumeViewSql {
                     &message.value.content["branch"].as_str() as &ToSql ,
                     &message.value.author,
                     &message.value.content["type"].as_str() as &ToSql,
-                    &message.value.content.as_str() as &ToSql ,
+                    &message.value.content as &ToSql ,
                   ],
                   ).unwrap();
             
