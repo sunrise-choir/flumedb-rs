@@ -70,7 +70,7 @@ fn offset_log_append_batch(b: &mut Bencher) {
 
         let result = offset_log.append_batch(&test_vecs).unwrap();
 
-        assert_eq!(result, 0);
+        assert_eq!(result[0], 0);
     })
 }
 fn offset_log_get(b: &mut Bencher) {
