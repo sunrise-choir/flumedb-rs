@@ -60,12 +60,27 @@ impl FlumeViewSql {
     }
 
     pub fn get_seq_by_key(&mut self, key: String) -> Result<i64, Error> {
-        let mut stmt = self.connection.prepare("SELECT id FROM message WHERE key=?1").unwrap();
+        let mut stmt = self.connection.prepare("SELECT id FROM message WHERE key=?1")?;
 
         stmt.query_row(&[key], |row|{
             row.get(0)
         })
         .map_err(|err| err.into())
+    }
+    pub fn get_seqs_by_type(&mut self, content_type: String) -> Result<Vec<i64>, Error> {
+        let mut stmt = self.connection.prepare("SELECT id FROM message WHERE content_type=?1")?;
+
+        let rows = stmt
+            .query_map(&[content_type], |row|{
+                row.get(0)
+            })?;
+
+        let seqs = rows.fold(Vec::<i64>::new(), |mut vec, row|{
+            vec.push(row.unwrap());
+            vec
+        });
+
+        Ok(seqs)
     }
 }
 
@@ -86,11 +101,11 @@ impl FlumeView for FlumeViewSql {
                     &message.value.sequence, 
                     &message.timestamp, 
                     &message.value.timestamp, 
-                    &message.value.content["root"] as &ToSql,
-                    &message.value.content["branch"] as &ToSql ,
+                    &message.value.content["root"].as_str() as &ToSql,
+                    &message.value.content["branch"].as_str() as &ToSql ,
                     &message.value.author,
-                    &message.value.content["type"] as &ToSql,
-                    &message.value.content as &ToSql ,
+                    &message.value.content["type"].as_str() as &ToSql,
+                    &message.value.content.as_str() as &ToSql ,
                   ],
                   ).unwrap();
             
@@ -170,5 +185,8 @@ mod test {
         view.append(expected_seq, jsn.as_bytes());
         let seq = view.get_seq_by_key("%KKPLj1tWfuVhCvgJz2hG/nIsVzmBRzUJaqHv+sb+n1c=.sha256".to_string()).unwrap();
         assert_eq!(seq, expected_seq as i64);
+
+        let seqs = view.get_seqs_by_type("post".to_string()).unwrap();
+        assert_eq!(seqs[0], expected_seq as i64);
     }
 }
