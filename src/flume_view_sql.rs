@@ -1,16 +1,16 @@
-use flume_view::*;
 use failure::Error;
+use flume_view::*;
 
+use rusqlite::types::ToSql;
+use rusqlite::OpenFlags;
 use rusqlite::{Connection, NO_PARAMS};
 use serde_json::Value;
-use rusqlite::types::{ToSql};
-use rusqlite::OpenFlags;
 
 use log;
 
 pub struct FlumeViewSql {
     connection: Connection,
-    latest: Sequence
+    latest: Sequence,
 }
 
 fn set_pragmas(conn: &mut Connection) {
@@ -60,8 +60,11 @@ fn create_tables(conn: &mut Connection) {
 impl FlumeViewSql {
     pub fn new(path: &str, latest: Sequence) -> FlumeViewSql {
         //let mut connection = Connection::open(path).expect("unable to open sqlite connection");
-        let flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let mut connection = Connection::open_with_flags(path, flags).expect("unable to open sqlite connection");
+        let flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let mut connection =
+            Connection::open_with_flags(path, flags).expect("unable to open sqlite connection");
 
         set_pragmas(&mut connection);
         create_tables(&mut connection);
@@ -70,22 +73,21 @@ impl FlumeViewSql {
     }
 
     pub fn get_seq_by_key(&mut self, key: String) -> Result<i64, Error> {
-        let mut stmt = self.connection.prepare("SELECT id FROM message WHERE key=?1")?;
+        let mut stmt = self
+            .connection
+            .prepare("SELECT id FROM message WHERE key=?1")?;
 
-        stmt.query_row(&[key], |row|{
-            row.get(0)
-        })
-        .map_err(|err| err.into())
+        stmt.query_row(&[key], |row| row.get(0))
+            .map_err(|err| err.into())
     }
     pub fn get_seqs_by_type(&mut self, content_type: String) -> Result<Vec<i64>, Error> {
-        let mut stmt = self.connection.prepare("SELECT id FROM message WHERE content_type=?1")?;
+        let mut stmt = self
+            .connection
+            .prepare("SELECT id FROM message WHERE content_type=?1")?;
 
-        let rows = stmt
-            .query_map(&[content_type], |row|{
-                row.get(0)
-            })?;
+        let rows = stmt.query_map(&[content_type], |row| row.get(0))?;
 
-        let seqs = rows.fold(Vec::<i64>::new(), |mut vec, row|{
+        let seqs = rows.fold(Vec::<i64>::new(), |mut vec, row| {
             vec.push(row.unwrap());
             vec
         });
@@ -93,7 +95,7 @@ impl FlumeViewSql {
         Ok(seqs)
     }
 
-    pub fn append_batch(&mut self, items: Vec<(Sequence, Vec<u8>)>){
+    pub fn append_batch(&mut self, items: Vec<(Sequence, Vec<u8>)>) {
         let tx = self.connection.transaction().unwrap();
 
         for item in items {
@@ -104,40 +106,38 @@ impl FlumeViewSql {
     }
 }
 
-fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<(), Error>{
+fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<(), Error> {
     let signed_seq = seq as i64;
     let mut stmt = connection.prepare_cached("INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author, content_type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").unwrap();
 
     serde_json::from_slice(item)
-        .map(|message: SsbMessage|{
-            stmt.execute(
-                &[
-                &signed_seq as &ToSql, 
-                &message.key, 
-                &message.value.sequence, 
-                &message.timestamp, 
-                &message.value.timestamp, 
+        .map(|message: SsbMessage| {
+            stmt.execute(&[
+                &signed_seq as &ToSql,
+                &message.key,
+                &message.value.sequence,
+                &message.timestamp,
+                &message.value.timestamp,
                 &message.value.content["root"].as_str() as &ToSql,
-                &message.value.content["branch"].as_str() as &ToSql ,
+                &message.value.content["branch"].as_str() as &ToSql,
                 &message.value.author,
                 &message.value.content["type"].as_str() as &ToSql,
-                &message.value.content as &ToSql ,
-                ],
-                ).unwrap();
-
+                &message.value.content as &ToSql,
+            ])
+            .unwrap();
         })
-    .unwrap_or({
-        warn!("Unable to parse item as a ssb message, seq: {}", seq);
-    });
+        .unwrap_or({
+            //warn!("Unable to parse item as a ssb message, seq: {}", seq);
+        });
 
     Ok(())
 }
 
 impl FlumeView for FlumeViewSql {
-    fn append(&mut self, seq: Sequence, item: &[u8]){
+    fn append(&mut self, seq: Sequence, item: &[u8]) {
         append_item(&self.connection, seq, item).unwrap()
     }
-    fn latest(&self) -> Sequence{
+    fn latest(&self) -> Sequence {
         self.latest
     }
 }
@@ -154,24 +154,23 @@ struct SsbValue {
 struct SsbMessage {
     key: String,
     value: SsbValue,
-    timestamp: i64 
+    timestamp: i64,
 }
-
 
 #[cfg(test)]
 mod test {
-    use flume_view_sql::*;
     use flume_view::*;
+    use flume_view_sql::*;
     use serde_json::*;
 
     #[test]
-    fn open_connection(){
+    fn open_connection() {
         FlumeViewSql::new("/tmp/test.sqlite3", 0);
         assert!(true)
     }
 
     #[test]
-    fn append(){
+    fn append() {
         let expected_seq = 1234;
         let filename = "/tmp/test.sqlite3";
         std::fs::remove_file(filename.clone())
@@ -206,7 +205,9 @@ mod test {
 }
 "#####;
         view.append(expected_seq, jsn.as_bytes());
-        let seq = view.get_seq_by_key("%KKPLj1tWfuVhCvgJz2hG/nIsVzmBRzUJaqHv+sb+n1c=.sha256".to_string()).unwrap();
+        let seq = view
+            .get_seq_by_key("%KKPLj1tWfuVhCvgJz2hG/nIsVzmBRzUJaqHv+sb+n1c=.sha256".to_string())
+            .unwrap();
         assert_eq!(seq, expected_seq as i64);
 
         let seqs = view.get_seqs_by_type("post".to_string()).unwrap();
