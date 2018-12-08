@@ -4,11 +4,18 @@ use failure::Error;
 use rusqlite::{Connection, NO_PARAMS};
 use serde_json::Value;
 use rusqlite::types::{ToSql};
+use rusqlite::OpenFlags;
+
 use log;
 
-struct FlumeViewSql {
+pub struct FlumeViewSql {
     connection: Connection,
     latest: Sequence
+}
+
+fn set_pragmas(conn: &mut Connection) {
+    conn.execute("PRAGMA synchronous = OFF", NO_PARAMS).unwrap();
+    conn.execute("PRAGMA page_size = 8192", NO_PARAMS).unwrap();
 }
 
 fn create_tables(conn: &mut Connection) {
@@ -52,8 +59,11 @@ fn create_tables(conn: &mut Connection) {
 
 impl FlumeViewSql {
     pub fn new(path: &str, latest: Sequence) -> FlumeViewSql {
-        let mut connection = Connection::open(path).expect("unable to open sqlite connection");
+        //let mut connection = Connection::open(path).expect("unable to open sqlite connection");
+        let flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let mut connection = Connection::open_with_flags(path, flags).expect("unable to open sqlite connection");
 
+        set_pragmas(&mut connection);
         create_tables(&mut connection);
 
         FlumeViewSql { connection, latest }
@@ -82,37 +92,50 @@ impl FlumeViewSql {
 
         Ok(seqs)
     }
+
+    pub fn append_batch(&mut self, items: Vec<(Sequence, Vec<u8>)>){
+        let tx = self.connection.transaction().unwrap();
+
+        for item in items {
+            append_item(&tx, item.0, &item.1).unwrap();
+        }
+
+        tx.commit().unwrap();
+    }
+}
+
+fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<(), Error>{
+    let signed_seq = seq as i64;
+    let mut stmt = connection.prepare_cached("INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author, content_type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").unwrap();
+
+    serde_json::from_slice(item)
+        .map(|message: SsbMessage|{
+            stmt.execute(
+                &[
+                &signed_seq as &ToSql, 
+                &message.key, 
+                &message.value.sequence, 
+                &message.timestamp, 
+                &message.value.timestamp, 
+                &message.value.content["root"].as_str() as &ToSql,
+                &message.value.content["branch"].as_str() as &ToSql ,
+                &message.value.author,
+                &message.value.content["type"].as_str() as &ToSql,
+                &message.value.content as &ToSql ,
+                ],
+                ).unwrap();
+
+        })
+    .unwrap_or({
+        warn!("Unable to parse item as a ssb message, seq: {}", seq);
+    });
+
+    Ok(())
 }
 
 impl FlumeView for FlumeViewSql {
     fn append(&mut self, seq: Sequence, item: &[u8]){
-        // ToSql is not implemented for u64. I think it's pretty safe to cast u64 to i64. The file
-        // would have to be very very large (2^63) before it overflows.
-        let signed_seq = seq as i64;
-
-        serde_json::from_slice(item)
-            .map(|message: SsbMessage|{
-                self.connection.execute(
-                    "INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author, content_type, content)
-                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                  &[
-                    &signed_seq as &ToSql, 
-                    &message.key, 
-                    &message.value.sequence, 
-                    &message.timestamp, 
-                    &message.value.timestamp, 
-                    &message.value.content["root"].as_str() as &ToSql,
-                    &message.value.content["branch"].as_str() as &ToSql ,
-                    &message.value.author,
-                    &message.value.content["type"].as_str() as &ToSql,
-                    &message.value.content as &ToSql ,
-                  ],
-                  ).unwrap();
-            
-            })
-            .unwrap_or({
-                warn!("Unable to parse item as a ssb message, seq: {}", seq);
-            });
+        append_item(&self.connection, seq, item).unwrap()
     }
     fn latest(&self) -> Sequence{
         self.latest

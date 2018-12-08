@@ -16,6 +16,8 @@ use flumedb::flume_log::FlumeLog;
 use flumedb::mem_log::MemLog;
 use flumedb::offset_log::OffsetCodec;
 use flumedb::offset_log::*;
+use flumedb::flume_view::*;
+use flumedb::flume_view_sql::*;
 use serde_json::{from_slice, Value};
 use tokio_codec::Decoder;
 
@@ -112,6 +114,7 @@ fn offset_log_iter(b: &mut Bencher) {
         let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
 
         let sum: u64 = log_iter
+            .map(|val| val.data_buffer)
             .map(|val| from_slice(&val).unwrap())
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
@@ -182,6 +185,65 @@ fn mem_log_iter(b: &mut Bencher) {
         assert!(sum > 0);
     })
 }
+fn flume_view_sql_insert_piets_entire_log(b: &mut Bencher){
+
+    let offset_filename = "./db/piet.offset";
+    let db_filename = "/tmp/test.sqlite3";
+
+    b.bench_n(1, |b|{
+        std::fs::remove_file(db_filename.clone()).unwrap_or(());
+        let mut view = FlumeViewSql::new(db_filename, 0);
+
+        let file = std::fs::File::open(offset_filename.to_string()).unwrap();
+        let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
+
+        let mut buff: Vec<(Sequence, Vec<u8>)> = Vec::new();
+
+        for data in log_iter{
+            buff.push((data.id, data.data_buffer));
+            if buff.len() >= 500 {
+                view.append_batch(buff);
+                buff = Vec::new();
+            }
+        }
+        if buff.len() > 0 {
+            view.append_batch(buff);
+        }
+    
+    })
+
+}
+
+
+fn flume_view_sql_insert_1000(b: &mut Bencher){
+
+    let offset_filename = "./db/piet.offset";
+    let db_filename = "/tmp/test.sqlite3";
+
+    b.iter(||{
+        std::fs::remove_file(db_filename.clone()).unwrap_or(());
+        let mut view = FlumeViewSql::new(db_filename, 0);
+
+        let file = std::fs::File::open(offset_filename.to_string()).unwrap();
+        let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
+
+        let mut buff: Vec<(Sequence, Vec<u8>)> = Vec::new();
+
+        for data in log_iter.take(1000){
+            buff.push((data.id, data.data_buffer));
+            if buff.len() >= 1000 {
+                view.append_batch(buff);
+                buff = Vec::new();
+            }
+        }
+        if buff.len() > 0 {
+            view.append_batch(buff);
+        }
+    
+    })
+
+}
+
 benchmark_group!(
     offset_log,
     offset_log_get,
@@ -192,4 +254,6 @@ benchmark_group!(
 );
 benchmark_group!(mem_log, mem_log_get, mem_log_append, mem_log_iter);
 
-benchmark_main!(offset_log, mem_log);
+benchmark_group!(sql, flume_view_sql_insert_1000);
+
+benchmark_main!(sql, offset_log, mem_log);

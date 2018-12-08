@@ -63,7 +63,7 @@ impl<ByteType, R: Read> OffsetLogIter<ByteType, R> {
 }
 
 impl<ByteType, R: Read> Iterator for OffsetLogIter<ByteType, R> {
-    type Item = Vec<u8>;
+    type Item = Data;
 
     //Yikes this is hacky!
     //  - Using scopes like this to keep the compiler happy looks yuck. How could that be done
@@ -126,7 +126,7 @@ impl<ByteType, R: Read> Iterator for OffsetLogIter<ByteType, R> {
                         data.data_buffer.len() + size_of_framing_bytes::<ByteType>()
                             - total_consumed,
                     );
-                    data.data_buffer
+                    data
                 })
             })
             .unwrap_or(None)
@@ -592,6 +592,7 @@ mod test {
 
         let sum: u64 = log_iter
             .take(5)
+            .map(|val| val.data_buffer)
             .map(|val| from_slice(&val).unwrap())
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
