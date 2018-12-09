@@ -10,6 +10,12 @@
     - Flume builds indexes. And it's not really useful without the indexes. As far as I can tell, without the indexes, just dumping the raw log is not used by much (anything) so not sure if the ordering straight off the log is actually important.
     - how are the indexes actually used? I _still_ don't get Dominic's documentation.
 
+## Sql experiments
+
+- Store all content and author keys raw takes 7.7s, 124M
+- Store all content, author by key, 8.4s, 115M
+- Store no content, author by key, 7.7s, 35M
+
 
 ## Noticings
 

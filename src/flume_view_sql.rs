@@ -18,7 +18,21 @@ fn set_pragmas(conn: &mut Connection) {
     conn.execute("PRAGMA page_size = 8192", NO_PARAMS).unwrap();
 }
 
+fn find_or_create_author(conn: &Connection, author: &str)-> Result<i64, Error> {
+        let mut stmt = conn
+            .prepare_cached("SELECT id FROM author_id WHERE author=?1")?;
+
+        stmt.query_row(&[author], |row| row.get(0))
+            .or_else(|err|{
+                conn.prepare_cached("INSERT INTO author_id (author) VALUES (?)")
+                    .map(|mut stmt| stmt.execute(&[author]))
+                    .map(|_| conn.last_insert_rowid())
+            })
+            .map_err(|err| err.into())
+}
+
 fn create_tables(conn: &mut Connection) {
+    //Size before using author id is 124M.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS message (
           id INTEGER PRIMARY KEY,
@@ -28,7 +42,7 @@ fn create_tables(conn: &mut Connection) {
           asserted_time TEXT,
           root TEXT,
           branch TEXT,
-          author TEXT,
+          author_id INTEGER,
           content_type TEXT,
           content JSON
         )",
@@ -37,10 +51,19 @@ fn create_tables(conn: &mut Connection) {
     .unwrap();
 
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS author_id (
+          id INTEGER PRIMARY KEY,
+          author TEXT UNIQUE
+        )",
+        NO_PARAMS,
+    )
+    .unwrap();
+
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS links (
           id INTEGER PRIMARY KEY,
-          links_from INTEGER,
-          links_to INTEGER
+          link_from TEXT,
+          link_to TEXT
         )",
         NO_PARAMS,
     )
@@ -106,13 +129,48 @@ impl FlumeViewSql {
     }
 }
 
+fn find_values_in_object_by_key(obj: &serde_json::Value, key: &str, values: &mut Vec<serde_json::Value>){
+
+    match obj.get(key) {
+        Some(val) => values.push(val.clone()),
+        _ => ()
+    };
+
+    match obj {
+        Value::Object(kv) => {
+            for val in kv.values() {
+                match val {
+                    Value::Object(_) => find_values_in_object_by_key(val, key, values),
+                    _ => ()
+                }
+            }
+        },
+        _ => ()
+    }
+}
+
 fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<(), Error> {
     let signed_seq = seq as i64;
-    let mut stmt = connection.prepare_cached("INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author, content_type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").unwrap();
+    let mut insert_msg_stmt = connection.prepare_cached("INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author_id, content_type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").unwrap();
+
+    let mut insert_link_stmt = connection.prepare_cached("INSERT INTO links (link_from, link_to) VALUES (?, ?)").unwrap();
 
     serde_json::from_slice(item)
         .map(|message: SsbMessage| {
-            stmt.execute(&[
+
+            let mut links = Vec::new();
+            find_values_in_object_by_key(&message.value.content, "link", &mut links);
+
+            links
+                .iter()
+                .filter(|link| link.is_string())
+                .for_each(|link|{
+                    insert_link_stmt.execute(&[&message.key, link.as_str().unwrap()])
+                        .unwrap();
+                });
+
+            let author_id = find_or_create_author(&connection, &message.value.author).unwrap(); 
+            insert_msg_stmt.execute(&[
                 &signed_seq as &ToSql,
                 &message.key,
                 &message.value.sequence,
@@ -120,7 +178,7 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
                 &message.value.timestamp,
                 &message.value.content["root"].as_str() as &ToSql,
                 &message.value.content["branch"].as_str() as &ToSql,
-                &message.value.author,
+                &author_id,
                 &message.value.content["type"].as_str() as &ToSql,
                 &message.value.content as &ToSql,
             ])
@@ -162,6 +220,18 @@ mod test {
     use flume_view::*;
     use flume_view_sql::*;
     use serde_json::*;
+
+    #[test]
+    fn find_values_in_object() {
+        let obj = json!({ "key": 1, "value": {"link": "hello", "deeper": {"link": "world"}}});
+
+        let mut vec = Vec::new();
+        find_values_in_object_by_key(&obj, "link", &mut vec);
+
+        assert_eq!(vec.len(), 2);
+        assert_eq!(vec[0].as_str().unwrap(), "hello");
+        assert_eq!(vec[1].as_str().unwrap(), "world");
+    }
 
     #[test]
     fn open_connection() {
