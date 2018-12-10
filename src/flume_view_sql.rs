@@ -8,8 +8,12 @@ use serde_json::Value;
 
 use log;
 
+use std::thread;
+use r2d2_sqlite::SqliteConnectionManager;
+use r2d2::Pool;
+
 pub struct FlumeViewSql {
-    connection: Connection,
+    pool: Pool<SqliteConnectionManager>,
     latest: Sequence,
 }
 
@@ -108,22 +112,26 @@ fn create_tables(conn: &mut Connection) {
 
 impl FlumeViewSql {
     pub fn new(path: &str, latest: Sequence) -> FlumeViewSql {
-        //let mut connection = Connection::open(path).expect("unable to open sqlite connection");
-        let flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let mut connection =
-            Connection::open_with_flags(path, flags).expect("unable to open sqlite connection");
 
+        let manager = SqliteConnectionManager::file(path);
+        let pool = r2d2::Pool::new(manager).unwrap();
+        //let mut connection = Connection::open(path).expect("unable to open sqlite connection");
+        //let flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        //    | OpenFlags::SQLITE_OPEN_CREATE
+        //    | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        //let mut connection =
+        //    Connection::open_with_flags(path, flags).expect("unable to open sqlite connection");
+
+        let mut connection = pool.get().expect("unable to get pool from connection");
         set_pragmas(&mut connection);
         create_tables(&mut connection);
 
-        FlumeViewSql { connection, latest }
+        FlumeViewSql { pool, latest }
     }
 
     pub fn get_seq_by_key(&mut self, key: String) -> Result<i64, Error> {
-        let mut stmt = self
-            .connection
+        let connection = self.pool.get().expect("unable to get connection from pool");
+        let mut stmt = connection
             .prepare("SELECT id FROM message WHERE key=?1")?;
 
         stmt.query_row(&[key], |row| row.get(0))
@@ -131,8 +139,8 @@ impl FlumeViewSql {
     }
 
     pub fn get_seqs_by_type(&mut self, content_type: String) -> Result<Vec<i64>, Error> {
-        let mut stmt = self
-            .connection
+        let connection = self.pool.get().expect("unable to get connection from pool");
+        let mut stmt = connection
             .prepare("SELECT id FROM message WHERE content_type=?1")?;
 
         let rows = stmt.query_map(&[content_type], |row| row.get(0))?;
@@ -145,14 +153,45 @@ impl FlumeViewSql {
         Ok(seqs)
     }
 
-    pub fn append_batch(&mut self, items: Vec<(Sequence, Vec<u8>)>) {
+    pub fn append_batch(&mut self, mut items: Vec<(Sequence, Vec<u8>)>) {
         info!("Start batch append");
-        let tx = self.connection.transaction().unwrap();
 
-        for item in items {
-            append_item(&tx, item.0, &item.1).unwrap();
-        }
+        let len = items.len() / 2;
+        let items1 = items.split_off(len);
+        let pool1 = self.pool.clone();
+        let pool2 = self.pool.clone();
+        let pool3 = self.pool.clone();
 
+        let thread1 = thread::spawn(move ||{
+            let mut connection = pool1.get().expect("unable to get connection from pool");
+            let tx = connection
+                .transaction().unwrap();
+
+            for item in items1 {
+                append_item(&tx, item.0, &item.1).unwrap();
+            }
+
+            tx.commit().unwrap();
+        });
+
+        let thread2 = thread::spawn(move ||{
+            let mut connection = pool2.get().expect("unable to get connection from pool");
+            let tx = connection
+                .transaction().unwrap();
+
+            for item in items {
+                append_item(&tx, item.0, &item.1).unwrap();
+            }
+
+            tx.commit().unwrap();
+        });
+
+        thread1.join().unwrap();
+        thread2.join().unwrap();
+
+        let mut connection = pool3.get().expect("unable to get connection from pool");
+        let tx = connection
+            .transaction().unwrap();
         create_author_index(&tx).unwrap();
 
         create_links_to_index(&tx).unwrap();
@@ -160,6 +199,7 @@ impl FlumeViewSql {
         create_content_type_index(&tx).unwrap();
 
         tx.commit().unwrap();
+
     }
 }
 
@@ -229,7 +269,7 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
 
 impl FlumeView for FlumeViewSql {
     fn append(&mut self, seq: Sequence, item: &[u8]) {
-        append_item(&self.connection, seq, item).unwrap()
+        append_item(&self.pool.get().unwrap(), seq, item).unwrap()
     }
     fn latest(&self) -> Sequence {
         self.latest
@@ -271,14 +311,14 @@ mod test {
 
     #[test]
     fn open_connection() {
-        FlumeViewSql::new("/tmp/test.sqlite3", 0);
+        FlumeViewSql::new("/tmp/test3.sqlite3", 0);
         assert!(true)
     }
 
     #[test]
     fn append() {
         let expected_seq = 1234;
-        let filename = "/tmp/test.sqlite3";
+        let filename = "/tmp/test4.sqlite3";
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
             .unwrap();

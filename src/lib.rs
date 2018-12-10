@@ -15,6 +15,8 @@ extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
 extern crate tokio_codec;
+extern crate r2d2;
+extern crate r2d2_sqlite;
 
 pub mod flume_log;
 pub mod flume_view;

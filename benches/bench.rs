@@ -225,7 +225,7 @@ fn flume_view_sql_insert_piets_entire_log(c: &mut Criterion) {
 
 fn flume_view_sql_insert(c: &mut Criterion) {
     let offset_filename = "./db/piet.offset";
-    let db_filename = "/tmp/test.sqlite3";
+    let db_filename = "/tmp/test_2.sqlite3";
 
     c.bench_function("flumeview sql insert", move |b| {
         b.iter(|| {
