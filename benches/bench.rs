@@ -81,6 +81,7 @@ fn offset_log_append_batch(c: &mut Criterion) {
         })
     });
 }
+
 fn offset_log_get(c: &mut Criterion) {
     let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
     std::fs::remove_file(filename.clone()).unwrap_or(());
@@ -201,6 +202,7 @@ fn mem_log_iter(c: &mut Criterion) {
         })
     });
 }
+
 fn flume_view_sql_insert_piets_entire_log(c: &mut Criterion) {
     use std::thread;
     let offset_filename = "./db/piet.offset";
@@ -213,7 +215,7 @@ fn flume_view_sql_insert_piets_entire_log(c: &mut Criterion) {
 
             let file = std::fs::File::open(offset_filename.to_string()).unwrap();
             let buff: Vec<_> = OffsetLogIter::<u32, std::fs::File>::new(file)
-                .map(|data|(data.id, data.data_buffer))
+                .map(|data| (data.id, data.data_buffer))
                 .collect();
 
             view.append_batch(buff);
@@ -231,20 +233,13 @@ fn flume_view_sql_insert(c: &mut Criterion) {
             let mut view = FlumeViewSql::new(db_filename, 0);
 
             let file = std::fs::File::open(offset_filename.to_string()).unwrap();
-            let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
 
-            let mut buff: Vec<(Sequence, Vec<u8>)> = Vec::new();
+            let buff: Vec<_> = OffsetLogIter::<u32, std::fs::File>::new(file)
+                .take(NUM_ENTRIES as usize)
+                .map(|data| (data.id, data.data_buffer))
+                .collect();
 
-            for data in log_iter.take(NUM_ENTRIES as usize) {
-                buff.push((data.id, data.data_buffer));
-                if buff.len() >= 1000 {
-                    view.append_batch(buff);
-                    buff = Vec::new();
-                }
-            }
-            if buff.len() > 0 {
-                view.append_batch(buff);
-            }
+            view.append_batch(buff);
         })
     });
 }

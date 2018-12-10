@@ -16,6 +16,9 @@
 - Store all content, author by key, 8.4s, 115M
 - Store no content, author by key, 7.7s, 35M
 
+## Indexing comparison:
+`rm backlinks-* feed keys.ht links links2 query -rf` => 311s to rebuild indices
+15s for the equivalent. 20 * faster.
 
 ## Noticings
 

@@ -23,7 +23,7 @@ jsonrpc-http-server = "9.0.0"
 
 [dependencies.rusqlite]
 version = "0.15.0"
-features = ["bundled", "serde_json"]
+features = ["bundled", "serde_json", "load_extension"]
 
 [[bench]]
 name = "bench"

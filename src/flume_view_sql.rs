@@ -18,19 +18,45 @@ fn set_pragmas(conn: &mut Connection) {
     conn.execute("PRAGMA page_size = 8192", NO_PARAMS).unwrap();
 }
 
-fn find_or_create_author(conn: &Connection, author: &str)-> Result<i64, Error> {
-        let mut stmt = conn
-            .prepare_cached("SELECT id FROM author_id WHERE author=?1")?;
+fn find_or_create_author(conn: &Connection, author: &str) -> Result<i64, Error> {
+    let mut stmt = conn.prepare_cached("SELECT id FROM author_id WHERE author=?1")?;
 
-        stmt.query_row(&[author], |row| row.get(0))
-            .or_else(|err|{
-                conn.prepare_cached("INSERT INTO author_id (author) VALUES (?)")
-                    .map(|mut stmt| stmt.execute(&[author]))
-                    .map(|_| conn.last_insert_rowid())
-            })
-            .map_err(|err| err.into())
+    stmt.query_row(&[author], |row| row.get(0))
+        .or_else(|err| {
+            conn.prepare_cached("INSERT INTO author_id (author) VALUES (?)")
+                .map(|mut stmt| stmt.execute(&[author]))
+                .map(|_| conn.last_insert_rowid())
+        })
+        .map_err(|err| err.into())
 }
 
+fn check_db_integrity(conn: &Connection) -> Result<(), Error> {
+    unimplemented!()
+}
+
+fn create_author_index(conn: &Connection) -> Result<usize, Error> {
+    info!("Creating author index");
+    conn.execute(
+        "CREATE INDEX author_id_index on message (author_id)",
+        NO_PARAMS,
+    )
+    .map_err(|err| err.into())
+}
+
+fn create_links_to_index(conn: &Connection) -> Result<usize, Error> {
+    info!("Creating links index");
+    conn.execute("CREATE INDEX links_to_index on links (link_to)", NO_PARAMS)
+        .map_err(|err| err.into())
+}
+
+fn create_content_type_index(conn: &Connection) -> Result<usize, Error> {
+    info!("Creating content type index");
+    conn.execute(
+        "CREATE INDEX content_type_index on message (content_type)",
+        NO_PARAMS,
+    )
+    .map_err(|err| err.into())
+}
 fn create_tables(conn: &mut Connection) {
     //Size before using author id is 124M.
     conn.execute(
@@ -103,6 +129,7 @@ impl FlumeViewSql {
         stmt.query_row(&[key], |row| row.get(0))
             .map_err(|err| err.into())
     }
+
     pub fn get_seqs_by_type(&mut self, content_type: String) -> Result<Vec<i64>, Error> {
         let mut stmt = self
             .connection
@@ -119,21 +146,31 @@ impl FlumeViewSql {
     }
 
     pub fn append_batch(&mut self, items: Vec<(Sequence, Vec<u8>)>) {
+        info!("Start batch append");
         let tx = self.connection.transaction().unwrap();
 
         for item in items {
             append_item(&tx, item.0, &item.1).unwrap();
         }
 
+        create_author_index(&tx).unwrap();
+
+        create_links_to_index(&tx).unwrap();
+
+        create_content_type_index(&tx).unwrap();
+
         tx.commit().unwrap();
     }
 }
 
-fn find_values_in_object_by_key(obj: &serde_json::Value, key: &str, values: &mut Vec<serde_json::Value>){
-
+fn find_values_in_object_by_key(
+    obj: &serde_json::Value,
+    key: &str,
+    values: &mut Vec<serde_json::Value>,
+) {
     match obj.get(key) {
         Some(val) => values.push(val.clone()),
-        _ => ()
+        _ => (),
     };
 
     match obj {
@@ -141,11 +178,11 @@ fn find_values_in_object_by_key(obj: &serde_json::Value, key: &str, values: &mut
             for val in kv.values() {
                 match val {
                     Value::Object(_) => find_values_in_object_by_key(val, key, values),
-                    _ => ()
+                    _ => (),
                 }
             }
-        },
-        _ => ()
+        }
+        _ => (),
     }
 }
 
@@ -153,40 +190,39 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
     let signed_seq = seq as i64;
     let mut insert_msg_stmt = connection.prepare_cached("INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author_id, content_type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").unwrap();
 
-    let mut insert_link_stmt = connection.prepare_cached("INSERT INTO links (link_from, link_to) VALUES (?, ?)").unwrap();
+    let mut insert_link_stmt = connection
+        .prepare_cached("INSERT INTO links (link_from, link_to) VALUES (?, ?)")
+        .unwrap();
 
-    serde_json::from_slice(item)
-        .map(|message: SsbMessage| {
+    let message: SsbMessage = serde_json::from_slice(item).unwrap();
 
-            let mut links = Vec::new();
-            find_values_in_object_by_key(&message.value.content, "link", &mut links);
+    let mut links = Vec::new();
+    find_values_in_object_by_key(&message.value.content, "link", &mut links);
 
-            links
-                .iter()
-                .filter(|link| link.is_string())
-                .for_each(|link|{
-                    insert_link_stmt.execute(&[&message.key, link.as_str().unwrap()])
-                        .unwrap();
-                });
-
-            let author_id = find_or_create_author(&connection, &message.value.author).unwrap(); 
-            insert_msg_stmt.execute(&[
-                &signed_seq as &ToSql,
-                &message.key,
-                &message.value.sequence,
-                &message.timestamp,
-                &message.value.timestamp,
-                &message.value.content["root"].as_str() as &ToSql,
-                &message.value.content["branch"].as_str() as &ToSql,
-                &author_id,
-                &message.value.content["type"].as_str() as &ToSql,
-                &message.value.content as &ToSql,
-            ])
-            .unwrap();
-        })
-        .unwrap_or({
-            //warn!("Unable to parse item as a ssb message, seq: {}", seq);
+    links
+        .iter()
+        .filter(|link| link.is_string())
+        .for_each(|link| {
+            insert_link_stmt
+                .execute(&[&message.key, link.as_str().unwrap()])
+                .unwrap();
         });
+
+    let author_id = find_or_create_author(&connection, &message.value.author).unwrap();
+    insert_msg_stmt
+        .execute(&[
+            &signed_seq as &ToSql,
+            &message.key,
+            &message.value.sequence,
+            &message.timestamp,
+            &message.value.timestamp,
+            &message.value.content["root"].as_str() as &ToSql,
+            &message.value.content["branch"].as_str() as &ToSql,
+            &author_id,
+            &message.value.content["type"].as_str() as &ToSql,
+            &message.value.content as &ToSql,
+        ])
+        .unwrap();
 
     Ok(())
 }
@@ -200,19 +236,19 @@ impl FlumeView for FlumeViewSql {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SsbValue {
     author: String,
     sequence: u32,
-    timestamp: i64,
+    timestamp: f64,
     content: Value,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct SsbMessage {
     key: String,
     value: SsbValue,
-    timestamp: i64,
+    timestamp: f64,
 }
 
 #[cfg(test)]
@@ -283,4 +319,5 @@ mod test {
         let seqs = view.get_seqs_by_type("post".to_string()).unwrap();
         assert_eq!(seqs[0], expected_seq as i64);
     }
+
 }
