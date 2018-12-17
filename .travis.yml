@@ -12,11 +12,10 @@ jobs:
       on:
         branch: master
 
-    - stage: test 
-      script:
+        #- stage: test 
+        # script:
         #- cargo build
         #- cargo test
 
 stages:
   - doc
-  - test
