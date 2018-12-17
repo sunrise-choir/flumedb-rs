@@ -2,13 +2,14 @@ language: rust
 
 jobs: 
   include: 
-    - stage: doc
+    - stage: deploy
       before_script: cargo doc --no-deps
       local-dir: ./target/doc
       provider: pages
       skip-cleanup: true
       github-token: $GITHUB_TOKEN  # Set in the settings page of your repository, as a secure variable
       keep-history: true
+      verbose: true
       on:
         branch: master
 
@@ -18,4 +19,4 @@ jobs:
         #- cargo test
 
 stages:
-  - doc
+  - deploy
