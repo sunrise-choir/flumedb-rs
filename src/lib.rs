@@ -10,7 +10,6 @@ extern crate rusqlite;
 extern crate serde;
 #[macro_use]
 extern crate log;
-extern crate rayon;
 extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
