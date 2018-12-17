@@ -14,10 +14,8 @@ jobs:
 
     - stage: test 
       script:
-        - cargo doc
         - cargo build --verbose --all
         - cargo test --verbose --all
 
 stages:
-  - test
   - doc
