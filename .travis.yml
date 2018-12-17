@@ -12,7 +12,7 @@ jobs:
       on:
         branch: master
 
-    -stage: test 
+    - stage: test 
       script:
         - cargo doc
         - cargo build --verbose --all
