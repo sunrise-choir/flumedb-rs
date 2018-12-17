@@ -1,7 +1,23 @@
-deploy:
-  provider: pages
-  skip-cleanup: true
-  github-token: $GITHUB_TOKEN  # Set in the settings page of your repository, as a secure variable
-  keep-history: true
-  on:
-    branch: master
+language: rust
+
+jobs: 
+  include: 
+    - stage: doc
+      script: cargo doc
+      local-dir: ./target/doc
+      provider: pages
+      skip-cleanup: true
+      github-token: $GITHUB_TOKEN  # Set in the settings page of your repository, as a secure variable
+      keep-history: true
+      on:
+        branch: master
+
+    -stage: test 
+      script:
+        - cargo doc
+        - cargo build --verbose --all
+        - cargo test --verbose --all
+
+stages:
+  - test
+  - doc
