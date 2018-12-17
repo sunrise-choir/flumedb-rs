@@ -8,7 +8,7 @@
   - This is a good abstraction for an append only log. But scuttlebot doesn't have to be an append only log in the db. I _think_ the api scuttlebutt expects is really more like a key value store.
     - We use ssb as a key value store. The `seq` part of flume doesn't belong in the higher level api.
     - Flume builds indexes. And it's not really useful without the indexes. As far as I can tell, without the indexes, just dumping the raw log is not used by much (anything) so not sure if the ordering straight off the log is actually important.
-    - how are the indexes actually used? I _still_ don't get Dominic's documentation.
+    - how are the indexes in ssb-query actually used? I _still_ don't get Dominic's documentation.
 
 ## Sql experiments
 
@@ -19,6 +19,42 @@
 ## Indexing comparison:
 `rm backlinks-* feed keys.ht links links2 query -rf` => 311s to rebuild indices
 15s for the equivalent. 20 * faster.
+16.7s if sql indexes are created when db is created.
+
+## Js api:
+
+```js
+  SSbFlume("~/.ssb/flume/offset.log", function(err, db){
+    //By the time we get here, the db has:
+      - done an integrity check
+      - rebuilt any indices
+  
+  })
+```
+
+Where `db` looks like: 
+```js
+{
+  append: function(data, cb){}, // _ONLY_ appends to offset log. Indexes do not automatically follow the log. 
+  appendBatch: function(dataArray, cb){},
+  
+  get: function(key, cb){} //using key here is specific to ssb, not flume, which only knows about seqs.
+
+  // how do we build in stream compatibility, it'd be good to pass in a pullPushable or something. Not sure how that works with thread syncro though.
+  // This is highlighting the difference between the ideal scuttlebot api and the next layer down which is a specialisation of flume, and then even lower is the raw flume api.
+
+  sqlView: {
+    index (rebuild? update? processLog?): function({reIndexAll: <bool>, synchoniseWithLog: <bool>, maxNumEntriesToProcess: <num>}, cb){},
+    behindLogBy: function(){},
+    query: function({query: <sql string>}, cb),
+    messagesByType: function({type: <string>, limit: <n>, reverse: <bool>}) //needs to be same api as existing sbot
+    links: function({from: <key>, to: <key>}) //needs to be same api as existing sbot
+    messagesByFeed: ...
+    messagesByAssertedTimestamp: ...
+    messagesByReceiveTimestamp: ...
+  }
+}
+```
 
 ## Noticings
 

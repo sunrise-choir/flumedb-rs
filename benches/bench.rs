@@ -13,7 +13,6 @@ extern crate tokio_codec;
 
 use bytes::BytesMut;
 use flumedb::flume_log::FlumeLog;
-use flumedb::flume_view::*;
 use flumedb::flume_view_sql::*;
 use flumedb::mem_log::MemLog;
 use flumedb::offset_log::OffsetCodec;
@@ -204,8 +203,7 @@ fn mem_log_iter(c: &mut Criterion) {
 }
 
 fn flume_view_sql_insert_piets_entire_log(c: &mut Criterion) {
-    use std::thread;
-    let offset_filename = "./db/piet.offset";
+    let offset_filename = "/home/piet/.ssb/flume/log.offset";
     let db_filename = "/tmp/test.sqlite3";
 
     c.bench_function("flume view sql insert piets entire log", move |b| {
@@ -224,7 +222,7 @@ fn flume_view_sql_insert_piets_entire_log(c: &mut Criterion) {
 }
 
 fn flume_view_sql_insert(c: &mut Criterion) {
-    let offset_filename = "./db/piet.offset";
+    let offset_filename = "/home/piet/.ssb/flume/log.offset";
     let db_filename = "/tmp/test.sqlite3";
 
     c.bench_function("flumeview sql insert", move |b| {
@@ -234,6 +232,8 @@ fn flume_view_sql_insert(c: &mut Criterion) {
 
             let file = std::fs::File::open(offset_filename.to_string()).unwrap();
 
+            //TODO: this is ok for a benchmark but uses lots of memory.
+            //Better would be to create a transaction and then append in a for_each loop.
             let buff: Vec<_> = OffsetLogIter::<u32, std::fs::File>::new(file)
                 .take(NUM_ENTRIES as usize)
                 .map(|data| (data.id, data.data_buffer))

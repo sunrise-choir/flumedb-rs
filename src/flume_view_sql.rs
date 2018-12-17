@@ -22,7 +22,7 @@ fn find_or_create_author(conn: &Connection, author: &str) -> Result<i64, Error> 
     let mut stmt = conn.prepare_cached("SELECT id FROM author_id WHERE author=?1")?;
 
     stmt.query_row(&[author], |row| row.get(0))
-        .or_else(|err| {
+        .or_else(|_| {
             conn.prepare_cached("INSERT INTO author_id (author) VALUES (?)")
                 .map(|mut stmt| stmt.execute(&[author]))
                 .map(|_| conn.last_insert_rowid())
@@ -30,8 +30,23 @@ fn find_or_create_author(conn: &Connection, author: &str) -> Result<i64, Error> 
         .map_err(|err| err.into())
 }
 
+#[derive(Debug, Fail)]
+pub enum FlumeViewSqlError {
+    #[fail(display = "Db failed integrity check")]
+    DbFailedIntegrityCheck {},
+}
+
 fn check_db_integrity(conn: &Connection) -> Result<(), Error> {
-    unimplemented!()
+    conn.query_row_and_then("PRAGMA integrity check", NO_PARAMS, |row| {
+        row.get_checked(0)
+            .map_err(|err| err.into())
+            .and_then(|res: String| {
+                if res == "ok" {
+                    return Ok(());
+                }
+                return Err(FlumeViewSqlError::DbFailedIntegrityCheck {}.into());
+            })
+    })
 }
 
 fn create_author_index(conn: &Connection) -> Result<usize, Error> {
@@ -59,6 +74,7 @@ fn create_content_type_index(conn: &Connection) -> Result<usize, Error> {
 }
 fn create_tables(conn: &mut Connection) {
     //Size before using author id is 124M.
+    //TODO: does seq need to be stored here?
     conn.execute(
         "CREATE TABLE IF NOT EXISTS message (
           id INTEGER PRIMARY KEY,
@@ -106,6 +122,14 @@ fn create_tables(conn: &mut Connection) {
     .unwrap();
 }
 
+fn create_indices(connection: &Connection) {
+    create_author_index(&connection).unwrap();
+
+    create_links_to_index(&connection).unwrap();
+
+    create_content_type_index(&connection).unwrap();
+}
+
 impl FlumeViewSql {
     pub fn new(path: &str, latest: Sequence) -> FlumeViewSql {
         //let mut connection = Connection::open(path).expect("unable to open sqlite connection");
@@ -117,6 +141,7 @@ impl FlumeViewSql {
 
         set_pragmas(&mut connection);
         create_tables(&mut connection);
+        create_indices(&connection);
 
         FlumeViewSql { connection, latest }
     }
@@ -152,12 +177,6 @@ impl FlumeViewSql {
         for item in items {
             append_item(&tx, item.0, &item.1).unwrap();
         }
-
-        create_author_index(&tx).unwrap();
-
-        create_links_to_index(&tx).unwrap();
-
-        create_content_type_index(&tx).unwrap();
 
         tx.commit().unwrap();
     }
@@ -271,14 +290,14 @@ mod test {
 
     #[test]
     fn open_connection() {
-        FlumeViewSql::new("/tmp/test.sqlite3", 0);
+        FlumeViewSql::new("/tmp/test123456.sqlite3", 0);
         assert!(true)
     }
 
     #[test]
     fn append() {
         let expected_seq = 1234;
-        let filename = "/tmp/test.sqlite3";
+        let filename = "/tmp/test12345.sqlite3";
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
             .unwrap();
@@ -320,4 +339,9 @@ mod test {
         assert_eq!(seqs[0], expected_seq as i64);
     }
 
+    #[test]
+    fn test_db_integrity() {
+
+    }
 }
+
