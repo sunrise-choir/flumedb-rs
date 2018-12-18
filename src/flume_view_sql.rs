@@ -36,18 +36,7 @@ pub enum FlumeViewSqlError {
     DbFailedIntegrityCheck {},
 }
 
-fn check_db_integrity(conn: &Connection) -> Result<(), Error> {
-    conn.query_row_and_then("PRAGMA integrity check", NO_PARAMS, |row| {
-        row.get_checked(0)
-            .map_err(|err| err.into())
-            .and_then(|res: String| {
-                if res == "ok" {
-                    return Ok(());
-                }
-                return Err(FlumeViewSqlError::DbFailedIntegrityCheck {}.into());
-            })
-    })
-}
+
 
 fn create_author_index(conn: &Connection) -> Result<usize, Error> {
     info!("Creating author index");
@@ -180,6 +169,19 @@ impl FlumeViewSql {
 
         tx.commit().unwrap();
     }
+
+    pub fn check_db_integrity(&mut self) -> Result<(), Error> {
+        self.connection.query_row_and_then("PRAGMA integrity_check", NO_PARAMS, |row| {
+            row.get_checked(0)
+                .map_err(|err| err.into())
+                .and_then(|res: String| {
+                    if res == "ok" {
+                        return Ok(());
+                    }
+                    return Err(FlumeViewSqlError::DbFailedIntegrityCheck {}.into());
+                })
+        })
+    }
 }
 
 fn find_values_in_object_by_key(
@@ -290,7 +292,11 @@ mod test {
 
     #[test]
     fn open_connection() {
-        FlumeViewSql::new("/tmp/test123456.sqlite3", 0);
+        let filename = "/tmp/test123456.sqlite3";
+        std::fs::remove_file(filename.clone())
+            .or::<Result<()>>(Ok(()))
+            .unwrap();
+        FlumeViewSql::new(filename, 0);
         assert!(true)
     }
 
@@ -340,8 +346,30 @@ mod test {
     }
 
     #[test]
-    fn test_db_integrity() {
+    fn test_db_integrity_ok() {
+        let filename = "/tmp/test_integrity.sqlite3";
+        std::fs::remove_file(filename.clone())
+            .or::<Result<()>>(Ok(()))
+            .unwrap();
 
+        let mut view = FlumeViewSql::new(filename, 0);
+        view.check_db_integrity().unwrap();
+    }
+    #[test]
+    fn test_db_integrity_fails() {
+        let filename = "/tmp/test_integrity_bad.sqlite3";
+        std::fs::remove_file(filename.clone())
+            .or::<Result<()>>(Ok(()))
+            .unwrap();
+
+        let mut view = FlumeViewSql::new(filename.clone(), 0);
+
+        std::fs::write(filename, b"BANG").unwrap();
+
+        match view.check_db_integrity() {
+            Ok(_) => panic!(),
+            Err(_) => assert!(true)
+        }
     }
 }
 
