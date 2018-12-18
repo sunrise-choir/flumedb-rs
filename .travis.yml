@@ -2,7 +2,7 @@ language: rust
 
 script: cargo doc --no-deps
 
-after_success:
+deploy:
   local-dir: ./target/doc
   provider: pages
   skip-cleanup: true
