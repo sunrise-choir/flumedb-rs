@@ -1,9 +1,8 @@
 language: rust
 
-test:
-  - cargo test && cargo doc
+script: cargo doc --no-deps
 
-deploy:
+after_success:
   local-dir: ./target/doc
   provider: pages
   skip-cleanup: true
