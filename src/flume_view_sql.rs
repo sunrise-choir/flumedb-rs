@@ -5,8 +5,32 @@ use rusqlite::types::ToSql;
 use rusqlite::OpenFlags;
 use rusqlite::{Connection, NO_PARAMS};
 use serde_json::Value;
+use serde_transcode::transcode;
+use ssb_legacy_msg::clmr::to_clmr_vec as to_vec;
+use ssb_legacy_msg::Message as LegacyMessage;
+use ssb_legacy_msg::Content as LegacyContent;
+use ssb_legacy_msg_data::LegacyF64;
+use ssb_legacy_msg::json;
+
+use ssb_multiformats::{
+    multihash::Multihash,
+    multikey::{Multikey, Multisig},
+    multibox::Multibox,
+};
 
 use log;
+
+pub trait ViewSql {
+    /// Checks if the stored db version is correct. If it's not, the db will need to be dropped and
+    /// re-created.
+    fn is_correct_db_version(&mut self) -> bool;
+
+    /// Create the required tables and indexes for an empty db
+    fn create_db(&mut self);
+
+    /// Drop all tables in the database
+    fn drop_db(&mut self);
+}
 
 pub struct FlumeViewSql {
     connection: Connection,
@@ -217,6 +241,26 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
 
     let message: SsbMessage = serde_json::from_slice(item).unwrap();
 
+    let author_mk = Multikey::from_compact(message.value.author.as_bytes()).unwrap().0;
+    let previous_mh = message.value.previous.clone().map(|prev|{
+        Multihash::from_compact(prev.as_bytes()).unwrap().0
+    });
+    let sig = Multikey::from_compact(message.value.signature.as_bytes())
+        .unwrap().0
+        .sig_from_legacy(message.value.signature.as_bytes())
+        .unwrap().0;
+
+    let legacy_message = LegacyMessage{
+        author: author_mk,
+        content: LegacyContent::Plain(message.value.content.clone()),
+        sequence: message.value.sequence as u64,
+        previous: previous_mh,
+        swapped: false,
+        timestamp: LegacyF64::from_f64(message.value.timestamp).unwrap(),
+        signature: sig 
+    };
+    println!("item is:{:?}", String::from_utf8(item.into()));
+
     let mut links = Vec::new();
     find_values_in_object_by_key(&message.value.content, "link", &mut links);
 
@@ -241,7 +285,7 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
             &message.value.content["branch"].as_str() as &ToSql,
             &author_id,
             &message.value.content["type"].as_str() as &ToSql,
-            &message.value.content as &ToSql,
+            &to_vec(&legacy_message).unwrap() as &ToSql,
         ])
         .unwrap();
 
@@ -253,7 +297,7 @@ impl FlumeView for FlumeViewSql {
         append_item(&self.connection, seq, item).unwrap()
     }
     fn latest(&self) -> Sequence {
-        self.latest
+        self.latest //TODO: This should be read from the db I think.
     }
 }
 
@@ -261,8 +305,10 @@ impl FlumeView for FlumeViewSql {
 struct SsbValue {
     author: String,
     sequence: u32,
+    previous: Option<String>,
     timestamp: f64,
     content: Value,
+    signature: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -356,7 +402,7 @@ mod test {
         view.check_db_integrity().unwrap();
     }
     #[test]
-    fn test_db_integrity_fails() {
+    fn test_db_integrity_fails_with_broken_db() {
         let filename = "/tmp/test_integrity_bad.sqlite3";
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
