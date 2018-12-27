@@ -2,4 +2,4 @@
 
 # Flumedb-rs
 
-## [Documentation](http://scuttlebutt.rs/flumedb-rs/flumedb/)
+## [Documentation](http://sunrise-choir.github.io/flumedb-rs/flumedb/)
