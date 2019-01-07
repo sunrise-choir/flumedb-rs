@@ -61,9 +61,10 @@ fn create_content_type_index(conn: &Connection) -> Result<usize, Error> {
     )
     .map_err(|err| err.into())
 }
+
+
+
 fn create_tables(conn: &mut Connection) {
-    //Size before using author id is 124M.
-    //TODO: does seq need to be stored here?
     conn.execute(
         "CREATE TABLE IF NOT EXISTS message (
           id INTEGER PRIMARY KEY,
@@ -119,8 +120,23 @@ fn create_indices(connection: &Connection) {
     create_content_type_index(&connection).unwrap();
 }
 
+fn get_latest_seq(conn: &Connection) -> Result<Sequence, Error> {
+    info!("Getting latest seq from db");
+
+    let mut stmt = conn
+        .prepare("SELECT MAX(id) FROM message")?;
+
+    stmt.query_row(NO_PARAMS, |row| {
+        let res: i64 = row
+            .get_checked(0)
+            .unwrap_or(0);
+        res as Sequence
+    })
+        .map_err(|err| err.into())
+}
+
 impl FlumeViewSql {
-    pub fn new(path: &str, latest: Sequence) -> FlumeViewSql {
+    pub fn new(path: &str) -> FlumeViewSql {
         //let mut connection = Connection::open(path).expect("unable to open sqlite connection");
         let flags: OpenFlags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
@@ -131,6 +147,8 @@ impl FlumeViewSql {
         set_pragmas(&mut connection);
         create_tables(&mut connection);
         create_indices(&connection);
+        
+        let latest = get_latest_seq(&connection).expect("unable to get latest seq value from db");
 
         FlumeViewSql { connection, latest }
     }
@@ -296,7 +314,7 @@ mod test {
         std::fs::remove_file(filename.clone())
             .or::<Result<()>>(Ok(()))
             .unwrap();
-        FlumeViewSql::new(filename, 0);
+        FlumeViewSql::new(filename);
         assert!(true)
     }
 
@@ -308,7 +326,7 @@ mod test {
             .or::<Result<()>>(Ok(()))
             .unwrap();
 
-        let mut view = FlumeViewSql::new(filename, 0);
+        let mut view = FlumeViewSql::new(filename);
         let jsn = r#####"{
   "key": "%KKPLj1tWfuVhCvgJz2hG/nIsVzmBRzUJaqHv+sb+n1c=.sha256",
   "value": {
@@ -352,7 +370,7 @@ mod test {
             .or::<Result<()>>(Ok(()))
             .unwrap();
 
-        let mut view = FlumeViewSql::new(filename, 0);
+        let mut view = FlumeViewSql::new(filename);
         view.check_db_integrity().unwrap();
     }
     #[test]
@@ -362,7 +380,7 @@ mod test {
             .or::<Result<()>>(Ok(()))
             .unwrap();
 
-        let mut view = FlumeViewSql::new(filename.clone(), 0);
+        let mut view = FlumeViewSql::new(filename.clone());
 
         std::fs::write(filename, b"BANG").unwrap();
 

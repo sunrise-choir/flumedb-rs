@@ -209,7 +209,7 @@ fn flume_view_sql_insert_piets_entire_log(c: &mut Criterion) {
     c.bench_function("flume view sql insert piets entire log", move |b| {
         b.iter(|| {
             std::fs::remove_file(db_filename.clone()).unwrap_or(());
-            let mut view = FlumeViewSql::new(db_filename, 0);
+            let mut view = FlumeViewSql::new(db_filename);
 
             let file = std::fs::File::open(offset_filename.to_string()).unwrap();
             let buff: Vec<_> = OffsetLogIter::<u32, std::fs::File>::new(file)
@@ -228,7 +228,7 @@ fn flume_view_sql_insert(c: &mut Criterion) {
     c.bench_function("flumeview sql insert", move |b| {
         b.iter(|| {
             std::fs::remove_file(db_filename.clone()).unwrap_or(());
-            let mut view = FlumeViewSql::new(db_filename, 0);
+            let mut view = FlumeViewSql::new(db_filename);
 
             let file = std::fs::File::open(offset_filename.to_string()).unwrap();
 
