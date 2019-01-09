@@ -50,9 +50,21 @@ pub struct OffsetLogIter<ByteType, R> {
     offset_codec: OffsetCodec<ByteType>,
 }
 
-impl<ByteType, R: Read> OffsetLogIter<ByteType, R> {
+impl<ByteType, R: Read + Seek> OffsetLogIter<ByteType, R> {
     pub fn new(file: R) -> OffsetLogIter<ByteType, R> {
         let reader = BufReader::new(file);
+        let offset_codec = OffsetCodec::new();
+
+        OffsetLogIter {
+            reader,
+            offset_codec,
+        }
+    }
+
+    pub fn with_starting_offset(mut file: R, starting_seq: Sequence) -> OffsetLogIter<ByteType, R>{
+        file.seek(SeekFrom::Start(starting_seq as u64)).unwrap();
+        let reader = BufReader::new(file);
+
         let offset_codec = OffsetCodec::new();
 
         OffsetLogIter {

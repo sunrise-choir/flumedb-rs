@@ -23,5 +23,6 @@ pub mod offset_log;
 
 pub use flume_log::*;
 pub use flume_view::*;
+pub use flume_view_sql::*;
 pub use mem_log::*;
 pub use offset_log::*;

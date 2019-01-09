@@ -10,7 +10,6 @@ use log;
 
 pub struct FlumeViewSql {
     connection: Connection,
-    latest: Sequence,
 }
 
 fn set_pragmas(conn: &mut Connection) {
@@ -113,27 +112,19 @@ fn create_tables(conn: &mut Connection) {
 }
 
 fn create_indices(connection: &Connection) {
-    create_author_index(&connection).unwrap();
+    create_author_index(&connection)
+        .and_then(|_|{
+            create_links_to_index(&connection)
+        })
+        .and_then(|_|{
+            create_content_type_index(&connection)
+        })
+        .map(|_| ())
+        .unwrap_or_else(|_|());
 
-    create_links_to_index(&connection).unwrap();
-
-    create_content_type_index(&connection).unwrap();
 }
 
-fn get_latest_seq(conn: &Connection) -> Result<Sequence, Error> {
-    info!("Getting latest seq from db");
 
-    let mut stmt = conn
-        .prepare("SELECT MAX(id) FROM message")?;
-
-    stmt.query_row(NO_PARAMS, |row| {
-        let res: i64 = row
-            .get_checked(0)
-            .unwrap_or(0);
-        res as Sequence
-    })
-        .map_err(|err| err.into())
-}
 
 impl FlumeViewSql {
     pub fn new(path: &str) -> FlumeViewSql {
@@ -148,9 +139,7 @@ impl FlumeViewSql {
         create_tables(&mut connection);
         create_indices(&connection);
         
-        let latest = get_latest_seq(&connection).expect("unable to get latest seq value from db");
-
-        FlumeViewSql { connection, latest }
+        FlumeViewSql { connection }
     }
 
     pub fn get_seq_by_key(&mut self, key: String) -> Result<i64, Error> {
@@ -177,6 +166,19 @@ impl FlumeViewSql {
         Ok(seqs)
     }
 
+    pub fn query(&mut self, query: &str) -> Result<String, Error> {
+        let mut stmt = self.connection.prepare_cached(query)?;
+
+        let values = stmt.query_map(NO_PARAMS, |row|{
+            for i in 0..row.column_count() {
+            
+            };
+        
+        });
+
+        unimplemented!()
+    }
+
     pub fn append_batch(&mut self, items: Vec<(Sequence, Vec<u8>)>) {
         info!("Start batch append");
         let tx = self.connection.transaction().unwrap();
@@ -186,6 +188,7 @@ impl FlumeViewSql {
         }
 
         tx.commit().unwrap();
+
     }
 
     pub fn check_db_integrity(&mut self) -> Result<(), Error> {
@@ -199,6 +202,21 @@ impl FlumeViewSql {
                     return Err(FlumeViewSqlError::DbFailedIntegrityCheck {}.into());
                 })
         })
+    }
+
+    pub fn get_latest(&self) -> Result<Sequence, Error> {
+        info!("Getting latest seq from db");
+
+        let mut stmt = self.connection
+            .prepare_cached("SELECT MAX(id) FROM message")?;
+
+        stmt.query_row(NO_PARAMS, |row| {
+            let res: i64 = row
+                .get_checked(0)
+                .unwrap_or(0);
+            res as Sequence
+        })
+        .map_err(|err| err.into())
     }
 }
 
@@ -271,7 +289,7 @@ impl FlumeView for FlumeViewSql {
         append_item(&self.connection, seq, item).unwrap()
     }
     fn latest(&self) -> Sequence {
-        self.latest
+        self.get_latest().unwrap()
     }
 }
 
