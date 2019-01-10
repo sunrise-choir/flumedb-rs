@@ -93,6 +93,7 @@ fn create_tables(conn: &mut Connection) {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS links (
           id INTEGER PRIMARY KEY,
+          flume_seq INTEGER,
           link_from TEXT,
           link_to TEXT
         )",
@@ -103,6 +104,7 @@ fn create_tables(conn: &mut Connection) {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS heads (
           id INTEGER PRIMARY KEY,
+          flume_seq INTEGER,
           links_from INTEGER,
           links_to INTEGER
         )",
@@ -231,10 +233,17 @@ fn find_values_in_object_by_key(
     };
 
     match obj {
+        Value::Array(arr) => {
+            for val in arr {
+                find_values_in_object_by_key(val, key, values);
+            }
+        
+        }
         Value::Object(kv) => {
             for val in kv.values() {
                 match val {
                     Value::Object(_) => find_values_in_object_by_key(val, key, values),
+                    Value::Array(_) => find_values_in_object_by_key(val, key, values),
                     _ => (),
                 }
             }
@@ -248,7 +257,7 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
     let mut insert_msg_stmt = connection.prepare_cached("INSERT INTO message (id, key, seq, received_time, asserted_time, root, branch, author_id, content_type, content) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").unwrap();
 
     let mut insert_link_stmt = connection
-        .prepare_cached("INSERT INTO links (link_from, link_to) VALUES (?, ?)")
+        .prepare_cached("INSERT INTO links (flume_seq, link_from, link_to) VALUES (?, ?, ?)")
         .unwrap();
 
     let message: SsbMessage = serde_json::from_slice(item).unwrap();
@@ -261,7 +270,11 @@ fn append_item(connection: &Connection, seq: Sequence, item: &[u8]) -> Result<()
         .filter(|link| link.is_string())
         .for_each(|link| {
             insert_link_stmt
-                .execute(&[&message.key, link.as_str().unwrap()])
+                .execute(&[
+                         &signed_seq as &ToSql,
+                         &message.key, 
+                         &link.as_str().unwrap(),
+                ])
                 .unwrap();
         });
 
@@ -316,14 +329,15 @@ mod test {
 
     #[test]
     fn find_values_in_object() {
-        let obj = json!({ "key": 1, "value": {"link": "hello", "deeper": {"link": "world"}}});
+        let obj = json!({ "key": 1, "value": {"link": "hello", "array": [{"link": "piet"}], "deeper": {"link": "world"}}});
 
         let mut vec = Vec::new();
         find_values_in_object_by_key(&obj, "link", &mut vec);
 
-        assert_eq!(vec.len(), 2);
+        assert_eq!(vec.len(), 3);
         assert_eq!(vec[0].as_str().unwrap(), "hello");
-        assert_eq!(vec[1].as_str().unwrap(), "world");
+        assert_eq!(vec[1].as_str().unwrap(), "piet");
+        assert_eq!(vec[2].as_str().unwrap(), "world");
     }
 
     #[test]
