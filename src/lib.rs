@@ -17,12 +17,10 @@ extern crate tokio_codec;
 
 pub mod flume_log;
 pub mod flume_view;
-pub mod flume_view_sql;
 pub mod mem_log;
 pub mod offset_log;
 
 pub use flume_log::*;
 pub use flume_view::*;
-pub use flume_view_sql::*;
 pub use mem_log::*;
 pub use offset_log::*;
