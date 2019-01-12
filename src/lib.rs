@@ -6,7 +6,6 @@ extern crate byteorder;
 extern crate bytes;
 #[macro_use]
 extern crate failure;
-extern crate rusqlite;
 extern crate serde;
 #[macro_use]
 extern crate log;
