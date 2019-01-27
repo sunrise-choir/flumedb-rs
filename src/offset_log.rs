@@ -2,7 +2,6 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
 use std::fs::{File, OpenOptions};
-use std::io;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::mem::size_of;
@@ -61,7 +60,7 @@ impl<ByteType, R: Read + Seek> OffsetLogIter<ByteType, R> {
         }
     }
 
-    pub fn with_starting_offset(mut file: R, starting_seq: Sequence) -> OffsetLogIter<ByteType, R>{
+    pub fn with_starting_offset(mut file: R, starting_seq: Sequence) -> OffsetLogIter<ByteType, R> {
         file.seek(SeekFrom::Start(starting_seq as u64)).unwrap();
         let reader = BufReader::new(file);
 
@@ -211,6 +210,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
     fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
         self.file
             .seek(SeekFrom::End(0)) // Could store a bool for is_at_end to avoid the sys call. If it is actually a sys call.
+            .map_err(|err| err.into())
             .and_then(|_| {
                 let mut vec = Vec::new();
                 vec.extend_from_slice(buff);
@@ -218,9 +218,8 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
                     BytesMut::with_capacity(size_of_framing_bytes::<ByteType>() + buff.len());
                 self.offset_codec.encode(vec, &mut encoded).map(|_| encoded)
             })
-            .and_then(|data| self.file.write(&data))
+            .and_then(|data| self.file.write(&data).map_err(|err| err.into()))
             .map(|len| self.offset_codec.length - len as u64)
-            .map_err(|err| err.into())
     }
 
     fn clear(&mut self, _seq_num: u64) {
@@ -248,20 +247,46 @@ fn is_valid_frame<T>(buf: &BytesMut, data_size: usize) -> bool {
     second_data_size == data_size
 }
 
+fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error> {
+    let chunk_size = size_of_framing_bytes::<T>() + item.len();
+    dest.reserve(chunk_size);
+    dest.put_u32_be(item.len() as u32);
+    dest.put_slice(&item);
+    dest.put_u32_be(item.len() as u32);
+    let new_offset = offset + chunk_size as u64;
+    // self.length += chunk_size as u64;
+
+    dest.put_uint_be(new_offset, size_of::<T>());
+    Ok(new_offset)
+}
+
+fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
+    if buf.len() < size_of::<u32>() {
+        return Ok(None);
+    }
+    let data_size = (&buf[..]).read_u32::<BigEndian>().unwrap() as usize;
+
+    if buf.len() < data_size + size_of_framing_bytes::<T>() {
+        return Ok(None);
+    }
+
+    if !is_valid_frame::<T>(buf, data_size) {
+        return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
+    }
+
+    buf.advance(size_of::<u32>()); //drop off one BytesType
+    let data_buffer = buf.split_to(data_size);
+    buf.advance(size_of::<u32>() + size_of::<T>()); //drop off 2 ByteTypes.
+
+    Ok(Some(data_buffer.to_vec()))
+}
+
 impl<ByteType> Encoder for OffsetCodec<ByteType> {
     type Item = Vec<u8>; //TODO make this a slice
-    type Error = io::Error;
+    type Error = Error;
 
     fn encode(&mut self, item: Self::Item, dest: &mut BytesMut) -> Result<(), Self::Error> {
-        let chunk_size = size_of_framing_bytes::<ByteType>() + item.len();
-        dest.reserve(chunk_size);
-        dest.put_u32_be(item.len() as u32);
-        dest.put_slice(&item);
-        dest.put_u32_be(item.len() as u32);
-        self.length += chunk_size as u64;
-
-        dest.put_uint_be(self.length.into(), size_of::<ByteType>());
-
+        self.length = encode::<ByteType>(self.length, &item, dest)?;
         Ok(())
     }
 }
@@ -271,32 +296,15 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
     type Error = Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if buf.len() < size_of::<u32>() {
-            return Ok(None);
+        match decode::<ByteType>(buf)? {
+            None => Ok(None),
+            Some(v) => {
+                let offset = self.last_valid_offset;
+                self.last_valid_offset += size_of_framing_bytes::<ByteType>() as u64
+                    + v.len() as u64;
+                Ok(Some(Data { data_buffer: v, id: offset }))
+            }
         }
-        let data_size = (&buf[..]).read_u32::<BigEndian>().unwrap() as usize;
-
-        if buf.len() < data_size + size_of_framing_bytes::<ByteType>() {
-            return Ok(None);
-        }
-
-        if !is_valid_frame::<ByteType>(buf, data_size) {
-            return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
-        }
-
-        buf.advance(size_of::<u32>()); //drop off one BytesType
-        let data_buffer = buf.split_to(data_size);
-        buf.advance(size_of::<u32>() + size_of::<ByteType>()); //drop off 2 ByteTypes.
-        let data = Data {
-            data_buffer: data_buffer.to_vec(),
-            id: self.last_valid_offset,
-        };
-
-        let next_offset =
-            self.last_valid_offset + size_of_framing_bytes::<ByteType>() as u64 + data_size as u64;
-        self.last_valid_offset = next_offset;
-
-        Ok(Some(data))
     }
 
     fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
