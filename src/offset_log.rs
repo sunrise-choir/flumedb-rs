@@ -316,26 +316,24 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
-    use offset_log::{size_of_framing_bytes, OffsetCodec, OffsetLog, OffsetLogIter};
-    use offset_log::{Decoder, Encoder};
+    use offset_log::{encode, decode, size_of_framing_bytes, OffsetLog, OffsetLogIter};
+
     use serde_json::*;
 
     #[test]
     fn simple_encode() {
-        let mut codec = OffsetCodec::<u32>::new();
         let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(16);
-        codec.encode(to_encode, &mut buf).unwrap();
+        encode::<u32>(0, &to_encode, &mut buf).unwrap();
 
         assert_eq!(&buf[..], &[0, 0, 0, 4, 1, 2, 3, 4, 0, 0, 0, 4, 0, 0, 0, 16])
     }
 
     #[test]
     fn simple_encode_u64() {
-        let mut codec = OffsetCodec::<u64>::new();
         let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(20);
-        codec.encode(to_encode, &mut buf).unwrap();
+        encode::<u64>(0, &to_encode, &mut buf).unwrap();
 
         assert_eq!(
             &buf[..],
@@ -345,12 +343,11 @@ mod test {
 
     #[test]
     fn encode_multi() {
-        let mut codec = OffsetCodec::<u32>::new();
-        let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(32);
-        codec.encode(to_encode, &mut buf).unwrap();
-        let to_encode = vec![5, 6, 7, 8];
-        codec.encode(to_encode, &mut buf).unwrap();
+
+        encode::<u32>(0, &[1, 2, 3, 4], &mut buf)
+            .and_then(|offset| encode::<u32>(offset, &[5,6,7,8], &mut buf))
+            .unwrap();
 
         assert_eq!(
             &buf[..],
@@ -360,14 +357,14 @@ mod test {
             ]
         )
     }
+
     #[test]
     fn encode_multi_u64() {
-        let mut codec = OffsetCodec::<u64>::new();
-        let to_encode = vec![1, 2, 3, 4];
         let mut buf = BytesMut::with_capacity(40);
-        codec.encode(to_encode, &mut buf).unwrap();
-        let to_encode = vec![5, 6, 7, 8];
-        codec.encode(to_encode, &mut buf).unwrap();
+
+        encode::<u64>(0, &[1, 2, 3, 4], &mut buf)
+            .and_then(|offset| encode::<u64>(offset, &[5,6,7,8], &mut buf))
+            .unwrap();
 
         assert_eq!(
             &buf[0..20],
@@ -378,123 +375,89 @@ mod test {
             &[0, 0, 0, 4, 5, 6, 7, 8, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 40]
         )
     }
+
     #[test]
     fn simple() {
-        let mut codec = OffsetCodec::<u32>::new();
         let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
-        let result = codec.decode(&mut BytesMut::from(frame_bytes));
+        let mut bytes = BytesMut::from(frame_bytes);
 
-        match result {
-            Ok(Some(data)) => {
-                assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
-            }
-            _ => assert!(false),
-        }
+        let v = decode::<u32>(&mut bytes).unwrap().unwrap();
+        assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
     }
+
     #[test]
     fn simple_u64() {
-        let mut codec = OffsetCodec::<u64>::new();
         let frame_bytes: &[u8] = &[
-            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24,
+            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24
         ];
-        let result = codec.decode(&mut BytesMut::from(frame_bytes));
+        let mut bytes = BytesMut::from(frame_bytes);
 
-        match result {
-            Ok(Some(data)) => {
-                assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
-            }
-            _ => assert!(false),
-        }
+        let v = decode::<u64>(&mut bytes).unwrap().unwrap();
+        assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
     }
+
     #[test]
-    fn mulitple() {
-        let mut codec = OffsetCodec::<u32>::new();
+    fn multiple() {
         let frame_bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 9, 10, 11, 12,
-            13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40,
+            13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40
         ];
         let mut bytes = BytesMut::from(frame_bytes);
-        let result1 = codec.decode(&mut bytes);
 
-        match result1 {
-            Ok(Some(data)) => {
-                assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
-            }
-            _ => assert!(false),
-        }
-        let result2 = codec.decode(&mut bytes);
-
-        match result2 {
-            Ok(Some(data)) => {
-                assert_eq!(data.id, 20);
-                assert_eq!(&data.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
-            }
-            _ => assert!(false),
-        }
+        let v1 = decode::<u32>(&mut bytes).unwrap().unwrap();
+        assert_eq!(&v1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let v2 = decode::<u32>(&mut bytes).unwrap().unwrap();
+        assert_eq!(&v2, &[9, 10, 11, 12, 13, 14, 15, 16]);
     }
+
     #[test]
-    fn mulitple_u64() {
-        let mut codec = OffsetCodec::<u64>::new();
+    fn multiple_u64() {
         let frame_bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 8, 9,
-            10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48,
+            10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48
         ];
         let mut bytes = BytesMut::from(frame_bytes);
-        let result1 = codec.decode(&mut bytes);
 
-        match result1 {
-            Ok(Some(data)) => {
-                assert_eq!(data.id, 0);
-                assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
-            }
-            _ => assert!(false),
-        }
-        let result2 = codec.decode(&mut bytes);
-
-        match result2 {
-            Ok(Some(data)) => {
-                assert_eq!(data.id, 24);
-                assert_eq!(&data.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
-            }
-            _ => assert!(false),
-        }
+        let v1 = decode::<u64>(&mut bytes).unwrap().unwrap();
+        assert_eq!(&v1, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let v2 = decode::<u64>(&mut bytes).unwrap().unwrap();
+        assert_eq!(&v2, &[9, 10, 11, 12, 13, 14, 15, 16]);
     }
+
+
     #[test]
     fn returns_ok_none_when_buffer_is_incomplete_frame() {
-        let mut codec = OffsetCodec::<u32>::new();
         let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0];
-        let result = codec.decode(&mut BytesMut::from(frame_bytes));
+        let result = decode::<u32>(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(None) => assert!(true),
             _ => assert!(false),
         }
     }
+
     #[test]
     fn returns_ok_none_when_buffer_less_than_4_bytes() {
-        let mut codec = OffsetCodec::<u32>::new();
         let frame_bytes: &[u8] = &[0, 0, 0];
-        let result = codec.decode(&mut BytesMut::from(frame_bytes));
+        let result = decode::<u32>(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(None) => assert!(true),
             _ => assert!(false),
         }
     }
+
     #[test]
     fn errors_with_bad_second_size_value() {
-        let mut codec = OffsetCodec::<u32>::new();
         let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0, 20];
-        let result = codec.decode(&mut BytesMut::from(frame_bytes));
+        let result = decode::<u32>(&mut BytesMut::from(frame_bytes));
 
         match result {
             Ok(Some(_)) => assert!(false),
             _ => assert!(true),
         }
     }
+
     #[test]
     fn read_from_a_file() {
         let mut offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
