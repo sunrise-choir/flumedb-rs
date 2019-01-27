@@ -14,7 +14,7 @@ impl MemLog {
 }
 
 impl FlumeLog for MemLog {
-    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, Error> {
+    fn get(&self, seq_num: u64) -> Result<Vec<u8>, Error> {
         self.log
             .get(seq_num as usize)
             .map(|slice| slice.clone())

@@ -2,9 +2,10 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem::size_of;
+use std::os::unix::prelude::FileExt;
 use tokio_codec::{Decoder, Encoder};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -41,7 +42,9 @@ impl<ByteType> OffsetCodec<ByteType> {
 
 pub struct OffsetLog<ByteType> {
     file: File,
-    offset_codec: OffsetCodec<ByteType>,
+    end_of_file: u64,
+    tmp_buffer: BytesMut,
+    byte_type: PhantomData<ByteType>
 }
 
 pub struct OffsetLogIter<ByteType, R> {
@@ -157,37 +160,38 @@ impl<ByteType> OffsetLog<ByteType> {
             .expect("Unable to get metadata of file")
             .len();
 
-        let offset_codec = OffsetCodec::<ByteType>::with_length(file_length);
-
-        OffsetLog { offset_codec, file }
+        OffsetLog {
+            file,
+            end_of_file: file_length,
+            tmp_buffer: BytesMut::new(),
+            byte_type: PhantomData
+        }
     }
+
     pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
-        let bytes = BytesMut::new();
+        let mut bytes = BytesMut::new();
         let mut offsets = Vec::<u64>::new();
 
-        let encoded = buffs.iter().try_fold(bytes, |mut acc, buff| {
-            let mut vec = Vec::new();
+        let new_end = buffs.iter().try_fold(self.end_of_file, |offset, buff| {
 
             //Maybe there's a more functional way of doing this. Kinda mixing functional and
             //imperative.
-            offsets.push(self.offset_codec.length);
-            vec.extend_from_slice(buff);
-            self.offset_codec.encode(vec, &mut acc).map(|_| acc)
+            offsets.push(offset);
+            encode::<ByteType>(offset, &buff, &mut bytes)
         })?;
 
-        self.file.seek(SeekFrom::End(0))?;
-        self.file.write(&encoded)?;
+        self.file.write_at(&bytes, self.end_of_file)?;
+        self.end_of_file = new_end;
 
         Ok(offsets)
     }
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
-    fn get(&mut self, seq_num: u64) -> Result<Vec<u8>, Error> {
+    fn get(&self, seq_num: u64) -> Result<Vec<u8>, Error> {
         let mut frame_bytes = vec![0; 4];
 
-        self.file.seek(SeekFrom::Start(seq_num as u64))?;
-        self.file.read(&mut frame_bytes)?;
+        self.file.read_at(&mut frame_bytes, seq_num)?;
 
         let data_size = size_of_framing_bytes::<ByteType>()
             + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
@@ -195,31 +199,27 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
         let mut buf = Vec::with_capacity(data_size);
         unsafe { buf.set_len(data_size) };
 
-        self.file.seek(SeekFrom::Start(seq_num as u64))?;
-        self.file.read(&mut buf)?;
-        self.offset_codec
-            .decode(&mut buf.into())?
-            .map(|val| val.data_buffer)
+        self.file.read_at(&mut buf, seq_num)?;
+
+        decode::<ByteType>(&mut buf.into())?
             .ok_or(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into())
     }
 
     fn latest(&self) -> u64 {
-        self.offset_codec.last_valid_offset
+        unimplemented!()
     }
 
     fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
-        self.file
-            .seek(SeekFrom::End(0)) // Could store a bool for is_at_end to avoid the sys call. If it is actually a sys call.
-            .map_err(|err| err.into())
-            .and_then(|_| {
-                let mut vec = Vec::new();
-                vec.extend_from_slice(buff);
-                let mut encoded =
-                    BytesMut::with_capacity(size_of_framing_bytes::<ByteType>() + buff.len());
-                self.offset_codec.encode(vec, &mut encoded).map(|_| encoded)
-            })
-            .and_then(|data| self.file.write(&data).map_err(|err| err.into()))
-            .map(|len| self.offset_codec.length - len as u64)
+
+        self.tmp_buffer.clear();
+        self.tmp_buffer.reserve(buff.len() + size_of_framing_bytes::<ByteType>());
+
+        let offset = self.end_of_file;
+        let new_end = encode::<ByteType>(offset, buff, &mut self.tmp_buffer)?;
+        self.file.write_at(&self.tmp_buffer, offset)?;
+
+        self.end_of_file = new_end;
+        Ok(offset)
     }
 
     fn clear(&mut self, _seq_num: u64) {
@@ -460,7 +460,7 @@ mod test {
 
     #[test]
     fn read_from_a_file() {
-        let mut offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
+        let offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
         let result = offset_log
             .get(0)
             .and_then(|val| from_slice(&val).map_err(|err| err.into()))
