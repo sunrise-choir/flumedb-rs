@@ -9,32 +9,22 @@ extern crate serde_json;
 extern crate byteorder;
 extern crate bytes;
 extern crate flumedb;
-extern crate tokio_codec;
 
 use bytes::BytesMut;
 use flumedb::flume_log::FlumeLog;
 use flumedb::mem_log::MemLog;
-use flumedb::offset_log::OffsetCodec;
 use flumedb::offset_log::*;
 use serde_json::{from_slice, Value};
-use tokio_codec::Decoder;
 
 const NUM_ENTRIES: u32 = 10000;
 
 fn offset_log_decode(c: &mut Criterion) {
     c.bench_function("offset_log_decode", |b| {
         b.iter(|| {
-            let mut codec = OffsetCodec::<u32>::new();
             let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
-            let result = codec.decode(&mut BytesMut::from(frame_bytes));
+            let v = decode::<u32>(&mut BytesMut::from(frame_bytes)).unwrap().unwrap();
 
-            match result {
-                Ok(Some(data)) => {
-                    assert_eq!(data.id, 0);
-                    assert_eq!(&data.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
-                }
-                _ => assert!(false),
-            }
+            assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
         })
     });
 }
@@ -118,8 +108,7 @@ fn offset_log_iter(c: &mut Criterion) {
 
     c.bench_function("offset log iter", move |b| {
         b.iter(|| {
-            let file = std::fs::File::open(filename.clone()).unwrap();
-            let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
+            let log_iter = offset_log.iter();
 
             let sum: u64 = log_iter
                 .map(|val| val.data_buffer)
@@ -201,13 +190,13 @@ fn mem_log_iter(c: &mut Criterion) {
     });
 }
 
-criterion_group!{
+criterion_group! {
 name = offset_log;
 config = Criterion::default().sample_size(10);
 targets = offset_log_get, offset_log_append, offset_log_append_batch, offset_log_iter, offset_log_decode
 }
 
-criterion_group!{
+criterion_group! {
 name = mem_log;
 config = Criterion::default().sample_size(10);
 targets = mem_log_get, mem_log_append, mem_log_iter

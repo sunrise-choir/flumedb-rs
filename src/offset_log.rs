@@ -2,7 +2,6 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::os::unix::prelude::FileExt;
@@ -47,103 +46,41 @@ pub struct OffsetLog<ByteType> {
     byte_type: PhantomData<ByteType>
 }
 
-pub struct OffsetLogIter<ByteType, R> {
-    reader: BufReader<R>,
-    offset_codec: OffsetCodec<ByteType>,
+pub struct LogEntry {
+    pub id: u64,
+    pub data_buffer: Vec<u8>
+}
+pub struct ReadResult {
+    pub entry: LogEntry,
+    pub next: u64
 }
 
-impl<ByteType, R: Read + Seek> OffsetLogIter<ByteType, R> {
-    pub fn new(file: R) -> OffsetLogIter<ByteType, R> {
-        let reader = BufReader::new(file);
-        let offset_codec = OffsetCodec::new();
+pub struct OffsetLogIter<'a, ByteType> {
+    log: &'a OffsetLog<ByteType>,
+    position: u64
+}
 
-        OffsetLogIter {
-            reader,
-            offset_codec,
-        }
+impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
+    pub fn new(log: &'a OffsetLog<ByteType>) -> OffsetLogIter<'a, ByteType> {
+        OffsetLogIter { log, position: 0 }
     }
 
-    pub fn with_starting_offset(mut file: R, starting_seq: Sequence) -> OffsetLogIter<ByteType, R> {
-        file.seek(SeekFrom::Start(starting_seq as u64)).unwrap();
-        let reader = BufReader::new(file);
-
-        let offset_codec = OffsetCodec::new();
-
-        OffsetLogIter {
-            reader,
-            offset_codec,
-        }
+    pub fn with_starting_offset(log: &'a OffsetLog<ByteType>, position: Sequence) -> OffsetLogIter<'a, ByteType> {
+        OffsetLogIter { log, position }
     }
 }
 
-impl<ByteType, R: Read> Iterator for OffsetLogIter<ByteType, R> {
-    type Item = Data;
-
-    //Yikes this is hacky!
-    //  - Using scopes like this to keep the compiler happy looks yuck. How could that be done
-    //  nicer?
-    //  - the buffer housekeeping could get moved into the OffsetLogIter.
+impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
+    type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut bytes = BytesMut::new();
-        let mut buff_len: usize;
-        let mut total_consumed: usize = 0;
-
-        {
-            let buff = self
-                .reader
-                .fill_buf()
-                .expect("Buffered read failed trying to read from file");
-            bytes.extend_from_slice(buff);
-            buff_len = buff.len();
+        match self.log.read(self.position) {
+            Ok(r) => {
+                self.position = r.next;
+                Some(r.entry)
+            },
+            Err(_) => None
         }
-
-        if bytes.len() == 0 {
-            return None;
-        }
-
-        // We need 4 bytes to be able to check the length of the data expected.
-        if bytes.len() < 4 {
-            {
-                self.reader.consume(bytes.len());
-                total_consumed = bytes.len()
-            }
-
-            let buff = self
-                .reader
-                .fill_buf()
-                .expect("Buffered read failed trying to read from file");
-            bytes.extend_from_slice(buff);
-            buff_len = buff.len();
-        }
-
-        let data_size = (&bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
-        let framed_size = data_size + size_of_framing_bytes::<ByteType>();
-
-        while bytes.len() < framed_size {
-            self.reader.consume(buff_len);
-            total_consumed += buff_len;
-            let buff = self
-                .reader
-                .fill_buf()
-                .expect("Buffered read failed trying to read from file");
-            buff_len = buff.len();
-
-            bytes.extend_from_slice(buff);
-        }
-
-        self.offset_codec
-            .decode(&mut bytes)
-            .map(|res| {
-                res.map(|data| {
-                    self.reader.consume(
-                        data.data_buffer.len() + size_of_framing_bytes::<ByteType>()
-                            - total_consumed,
-                    );
-                    data
-                })
-            })
-            .unwrap_or(None)
     }
 }
 
@@ -168,6 +105,28 @@ impl<ByteType> OffsetLog<ByteType> {
         }
     }
 
+    pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
+        let mut frame_bytes = vec![0; 4];
+
+        self.file.read_at(&mut frame_bytes, offset)?;
+
+        let data_size = size_of_framing_bytes::<ByteType>()
+            + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
+
+        let mut buf = Vec::with_capacity(data_size);
+        unsafe { buf.set_len(data_size) };
+
+        self.file.read_at(&mut buf, offset)?;
+
+        match decode::<ByteType>(&mut buf.into())? {
+            Some(v) => Ok(ReadResult {
+                entry: LogEntry { id: offset, data_buffer: v },
+                next: offset + data_size as u64
+            }),
+            None => Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall{}.into())
+        }
+    }
+
     pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
         let mut bytes = BytesMut::new();
         let mut offsets = Vec::<u64>::new();
@@ -185,24 +144,15 @@ impl<ByteType> OffsetLog<ByteType> {
 
         Ok(offsets)
     }
+
+    pub fn iter(&self) -> OffsetLogIter<ByteType> {
+        OffsetLogIter::new(&self)
+    }
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
     fn get(&self, seq_num: u64) -> Result<Vec<u8>, Error> {
-        let mut frame_bytes = vec![0; 4];
-
-        self.file.read_at(&mut frame_bytes, seq_num)?;
-
-        let data_size = size_of_framing_bytes::<ByteType>()
-            + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
-
-        let mut buf = Vec::with_capacity(data_size);
-        unsafe { buf.set_len(data_size) };
-
-        self.file.read_at(&mut buf, seq_num)?;
-
-        decode::<ByteType>(&mut buf.into())?
-            .ok_or(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into())
+        self.read(seq_num).map(|r| r.entry.data_buffer)
     }
 
     fn latest(&self) -> u64 {
@@ -247,7 +197,7 @@ fn is_valid_frame<T>(buf: &BytesMut, data_size: usize) -> bool {
     second_data_size == data_size
 }
 
-fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error> {
+pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error> {
     let chunk_size = size_of_framing_bytes::<T>() + item.len();
     dest.reserve(chunk_size);
     dest.put_u32_be(item.len() as u32);
@@ -260,7 +210,7 @@ fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error
     Ok(new_offset)
 }
 
-fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
+pub fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
     if buf.len() < size_of::<u32>() {
         return Ok(None);
     }
@@ -316,7 +266,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
-    use offset_log::{encode, decode, size_of_framing_bytes, OffsetLog, OffsetLogIter};
+    use offset_log::{encode, decode, size_of_framing_bytes, OffsetLog};
 
     use serde_json::*;
 
@@ -569,9 +519,9 @@ mod test {
     #[test]
     fn offset_log_as_iter() {
         let filename = "./db/test.offset".to_string();
-        let file = std::fs::File::open(filename).unwrap();
+        let log = OffsetLog::<u32>::new(filename);
 
-        let log_iter = OffsetLogIter::<u32, std::fs::File>::new(file);
+        let log_iter = log.iter();
 
         let sum: u64 = log_iter
             .take(5)
