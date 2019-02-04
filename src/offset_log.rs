@@ -5,7 +5,6 @@ use std::fs::{File, OpenOptions};
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::os::unix::prelude::FileExt;
-use tokio_codec::{Decoder, Encoder};
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct OffsetCodec<ByteType> {
@@ -234,40 +233,6 @@ pub fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
     buf.advance(size_of::<u32>() + size_of::<T>()); //drop off 2 ByteTypes.
 
     Ok(Some(data_buffer.to_vec()))
-}
-
-impl<ByteType> Encoder for OffsetCodec<ByteType> {
-    type Item = Vec<u8>; //TODO make this a slice
-    type Error = Error;
-
-    fn encode(&mut self, item: Self::Item, dest: &mut BytesMut) -> Result<(), Self::Error> {
-        self.length = encode::<ByteType>(self.length, &item, dest)?;
-        Ok(())
-    }
-}
-
-impl<ByteType> Decoder for OffsetCodec<ByteType> {
-    type Item = Data;
-    type Error = Error;
-
-    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        match decode::<ByteType>(buf)? {
-            None => Ok(None),
-            Some(v) => {
-                let offset = self.last_valid_offset;
-                self.last_valid_offset +=
-                    size_of_framing_bytes::<ByteType>() as u64 + v.len() as u64;
-                Ok(Some(Data {
-                    data_buffer: v,
-                    id: offset,
-                }))
-            }
-        }
-    }
-
-    fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.decode(buf)
-    }
 }
 
 #[cfg(test)]

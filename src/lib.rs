@@ -10,7 +10,6 @@ extern crate log;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
-extern crate tokio_codec;
 
 pub mod flume_log;
 pub mod flume_view;

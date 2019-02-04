@@ -5,7 +5,6 @@ authors = ["Piet Geursen <pietgeursen@gmail.com>"]
 
 [dependencies]
 log = "0.4.6"
-tokio-codec = "0.1.1"
 bytes = "0.4"
 byteorder = "1.2.2"
 failure = "0.1.3"
