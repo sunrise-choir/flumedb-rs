@@ -43,21 +43,21 @@ pub struct OffsetLog<ByteType> {
     file: File,
     end_of_file: u64,
     tmp_buffer: BytesMut,
-    byte_type: PhantomData<ByteType>
+    byte_type: PhantomData<ByteType>,
 }
 
 pub struct LogEntry {
     pub id: u64,
-    pub data_buffer: Vec<u8>
+    pub data_buffer: Vec<u8>,
 }
 pub struct ReadResult {
     pub entry: LogEntry,
-    pub next: u64
+    pub next: u64,
 }
 
 pub struct OffsetLogIter<'a, ByteType> {
     log: &'a OffsetLog<ByteType>,
-    position: u64
+    position: u64,
 }
 
 impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
@@ -65,7 +65,10 @@ impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
         OffsetLogIter { log, position: 0 }
     }
 
-    pub fn with_starting_offset(log: &'a OffsetLog<ByteType>, position: Sequence) -> OffsetLogIter<'a, ByteType> {
+    pub fn with_starting_offset(
+        log: &'a OffsetLog<ByteType>,
+        position: Sequence,
+    ) -> OffsetLogIter<'a, ByteType> {
         OffsetLogIter { log, position }
     }
 }
@@ -78,8 +81,8 @@ impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
             Ok(r) => {
                 self.position = r.next;
                 Some(r.entry)
-            },
-            Err(_) => None
+            }
+            Err(_) => None,
         }
     }
 }
@@ -101,7 +104,7 @@ impl<ByteType> OffsetLog<ByteType> {
             file,
             end_of_file: file_length,
             tmp_buffer: BytesMut::new(),
-            byte_type: PhantomData
+            byte_type: PhantomData,
         }
     }
 
@@ -120,10 +123,13 @@ impl<ByteType> OffsetLog<ByteType> {
 
         match decode::<ByteType>(&mut buf.into())? {
             Some(v) => Ok(ReadResult {
-                entry: LogEntry { id: offset, data_buffer: v },
-                next: offset + data_size as u64
+                entry: LogEntry {
+                    id: offset,
+                    data_buffer: v,
+                },
+                next: offset + data_size as u64,
             }),
-            None => Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall{}.into())
+            None => Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into()),
         }
     }
 
@@ -132,7 +138,6 @@ impl<ByteType> OffsetLog<ByteType> {
         let mut offsets = Vec::<u64>::new();
 
         let new_end = buffs.iter().try_fold(self.end_of_file, |offset, buff| {
-
             //Maybe there's a more functional way of doing this. Kinda mixing functional and
             //imperative.
             offsets.push(offset);
@@ -160,9 +165,9 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
     }
 
     fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
-
         self.tmp_buffer.clear();
-        self.tmp_buffer.reserve(buff.len() + size_of_framing_bytes::<ByteType>());
+        self.tmp_buffer
+            .reserve(buff.len() + size_of_framing_bytes::<ByteType>());
 
         let offset = self.end_of_file;
         let new_end = encode::<ByteType>(offset, buff, &mut self.tmp_buffer)?;
@@ -250,9 +255,12 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
             None => Ok(None),
             Some(v) => {
                 let offset = self.last_valid_offset;
-                self.last_valid_offset += size_of_framing_bytes::<ByteType>() as u64
-                    + v.len() as u64;
-                Ok(Some(Data { data_buffer: v, id: offset }))
+                self.last_valid_offset +=
+                    size_of_framing_bytes::<ByteType>() as u64 + v.len() as u64;
+                Ok(Some(Data {
+                    data_buffer: v,
+                    id: offset,
+                }))
             }
         }
     }
@@ -266,7 +274,7 @@ impl<ByteType> Decoder for OffsetCodec<ByteType> {
 mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
-    use offset_log::{encode, decode, size_of_framing_bytes, OffsetLog};
+    use offset_log::{decode, encode, size_of_framing_bytes, OffsetLog};
 
     use serde_json::*;
 
@@ -296,7 +304,7 @@ mod test {
         let mut buf = BytesMut::with_capacity(32);
 
         encode::<u32>(0, &[1, 2, 3, 4], &mut buf)
-            .and_then(|offset| encode::<u32>(offset, &[5,6,7,8], &mut buf))
+            .and_then(|offset| encode::<u32>(offset, &[5, 6, 7, 8], &mut buf))
             .unwrap();
 
         assert_eq!(
@@ -313,7 +321,7 @@ mod test {
         let mut buf = BytesMut::with_capacity(40);
 
         encode::<u64>(0, &[1, 2, 3, 4], &mut buf)
-            .and_then(|offset| encode::<u64>(offset, &[5,6,7,8], &mut buf))
+            .and_then(|offset| encode::<u64>(offset, &[5, 6, 7, 8], &mut buf))
             .unwrap();
 
         assert_eq!(
@@ -338,7 +346,7 @@ mod test {
     #[test]
     fn simple_u64() {
         let frame_bytes: &[u8] = &[
-            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24
+            0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24,
         ];
         let mut bytes = BytesMut::from(frame_bytes);
 
@@ -350,7 +358,7 @@ mod test {
     fn multiple() {
         let frame_bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 9, 10, 11, 12,
-            13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40
+            13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40,
         ];
         let mut bytes = BytesMut::from(frame_bytes);
 
@@ -364,7 +372,7 @@ mod test {
     fn multiple_u64() {
         let frame_bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 8, 9,
-            10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48
+            10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48,
         ];
         let mut bytes = BytesMut::from(frame_bytes);
 
@@ -373,7 +381,6 @@ mod test {
         let v2 = decode::<u64>(&mut bytes).unwrap().unwrap();
         assert_eq!(&v2, &[9, 10, 11, 12, 13, 14, 15, 16]);
     }
-
 
     #[test]
     fn returns_ok_none_when_buffer_is_incomplete_frame() {

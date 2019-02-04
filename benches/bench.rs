@@ -22,7 +22,9 @@ fn offset_log_decode(c: &mut Criterion) {
     c.bench_function("offset_log_decode", |b| {
         b.iter(|| {
             let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
-            let v = decode::<u32>(&mut BytesMut::from(frame_bytes)).unwrap().unwrap();
+            let v = decode::<u32>(&mut BytesMut::from(frame_bytes))
+                .unwrap()
+                .unwrap();
 
             assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
         })
