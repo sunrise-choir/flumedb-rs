@@ -1,7 +1,9 @@
+use buffered_offset_reader::{BufOffsetReader, OffsetReadMut};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
 use std::fs::{File, OpenOptions};
+use std::io;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::os::unix::prelude::FileExt;
@@ -55,20 +57,22 @@ pub struct ReadResult {
 }
 
 pub struct OffsetLogIter<'a, ByteType> {
-    log: &'a OffsetLog<ByteType>,
+    reader: BufOffsetReader<'a, File>,
     position: u64,
+    byte_type: PhantomData<ByteType>,
 }
 
 impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
-    pub fn new(log: &'a OffsetLog<ByteType>) -> OffsetLogIter<'a, ByteType> {
-        OffsetLogIter { log, position: 0 }
+    pub fn new(file: &'a File) -> OffsetLogIter<'a, ByteType> {
+        OffsetLogIter::with_starting_offset(&file, 0)
     }
 
-    pub fn with_starting_offset(
-        log: &'a OffsetLog<ByteType>,
-        position: Sequence,
-    ) -> OffsetLogIter<'a, ByteType> {
-        OffsetLogIter { log, position }
+    pub fn with_starting_offset(file: &File, position: Sequence) -> OffsetLogIter<ByteType> {
+        OffsetLogIter {
+            reader: BufOffsetReader::new(&file),
+            position,
+            byte_type: PhantomData,
+        }
     }
 }
 
@@ -76,7 +80,10 @@ impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
     type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.log.read(self.position) {
+        let r = read_entry::<ByteType, _>(self.position, |buf, pos| {
+            self.reader.read_at(buf, pos as usize)
+        });
+        match r {
             Ok(r) => {
                 self.position = r.next;
                 Some(r.entry)
@@ -108,28 +115,7 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
-        let mut frame_bytes = vec![0; 4];
-
-        self.file.read_at(&mut frame_bytes, offset)?;
-
-        let data_size = size_of_framing_bytes::<ByteType>()
-            + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
-
-        let mut buf = Vec::with_capacity(data_size);
-        unsafe { buf.set_len(data_size) };
-
-        self.file.read_at(&mut buf, offset)?;
-
-        match decode::<ByteType>(&mut buf.into())? {
-            Some(v) => Ok(ReadResult {
-                entry: LogEntry {
-                    id: offset,
-                    data_buffer: v,
-                },
-                next: offset + data_size as u64,
-            }),
-            None => Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into()),
-        }
+        read_entry::<ByteType, _>(offset, |buf, pos| self.file.read_at(buf, pos))
     }
 
     pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
@@ -150,7 +136,7 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn iter(&self) -> OffsetLogIter<ByteType> {
-        OffsetLogIter::new(&self)
+        OffsetLogIter::new(&self.file)
     }
 }
 
@@ -233,6 +219,34 @@ pub fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
     buf.advance(size_of::<u32>() + size_of::<T>()); //drop off 2 ByteTypes.
 
     Ok(Some(data_buffer.to_vec()))
+}
+
+fn read_entry<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+where
+    F: FnMut(&mut [u8], u64) -> io::Result<usize>,
+{
+    let mut frame_bytes = vec![0; 4];
+
+    read_at(&mut frame_bytes, offset)?;
+
+    let data_size = size_of_framing_bytes::<ByteType>()
+        + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
+
+    let mut buf = Vec::with_capacity(data_size);
+    unsafe { buf.set_len(data_size) };
+
+    read_at(&mut buf, offset)?;
+
+    match decode::<ByteType>(&mut buf.into())? {
+        Some(v) => Ok(ReadResult {
+            entry: LogEntry {
+                id: offset,
+                data_buffer: v,
+            },
+            next: offset + data_size as u64,
+        }),
+        None => Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into()),
+    }
 }
 
 #[cfg(test)]
