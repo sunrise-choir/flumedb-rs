@@ -8,36 +8,12 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::os::unix::prelude::FileExt;
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct OffsetCodec<ByteType> {
-    last_valid_offset: u64,
-    length: u64,
-    byte_type: PhantomData<ByteType>,
-}
-
 #[derive(Debug, Fail)]
 pub enum FlumeOffsetLogError {
     #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
     CorruptLogFile {},
     #[fail(display = "The decode buffer passed to decode was too small")]
     DecodeBufferSizeTooSmall {},
-}
-
-impl<ByteType> OffsetCodec<ByteType> {
-    pub fn new() -> OffsetCodec<ByteType> {
-        OffsetCodec {
-            last_valid_offset: 0,
-            length: 0,
-            byte_type: PhantomData,
-        }
-    }
-    pub fn with_length(length: u64) -> OffsetCodec<ByteType> {
-        OffsetCodec {
-            last_valid_offset: 0,
-            length,
-            byte_type: PhantomData,
-        }
-    }
 }
 
 pub struct OffsetLog<ByteType> {
