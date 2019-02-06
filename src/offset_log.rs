@@ -200,12 +200,11 @@ fn read_entry<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Er
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
-    let mut frame_bytes = vec![0; 4];
-
+    let mut frame_bytes = [0, 0, 0, 0];
     read_at(&mut frame_bytes, offset)?;
 
-    let data_size = size_of_framing_bytes::<ByteType>()
-        + (&frame_bytes[0..4]).read_u32::<BigEndian>().unwrap() as usize;
+    let payload_size = (&frame_bytes[..]).read_u32::<BigEndian>().unwrap() as usize;
+    let data_size = size_of_framing_bytes::<ByteType>() + payload_size;
 
     let mut buf = Vec::with_capacity(data_size);
     unsafe { buf.set_len(data_size) };
