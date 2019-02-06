@@ -1,4 +1,4 @@
-use buffered_offset_reader::{BufOffsetReader, OffsetReadMut};
+use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetWrite};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
@@ -6,7 +6,6 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::marker::PhantomData;
 use std::mem::size_of;
-use std::os::unix::prelude::FileExt;
 
 #[derive(Debug, Fail)]
 pub enum FlumeOffsetLogError {
@@ -91,7 +90,7 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
-        read_entry::<ByteType, _>(offset, |buf, pos| self.file.read_at(buf, pos))
+        read_entry::<ByteType, _>(offset, |buf, pos| self.file.read_at(buf, pos as usize))
     }
 
     pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
@@ -105,7 +104,7 @@ impl<ByteType> OffsetLog<ByteType> {
             encode::<ByteType>(offset, &buff, &mut bytes)
         })?;
 
-        self.file.write_at(&bytes, self.end_of_file)?;
+        self.file.write_at(&bytes, self.end_of_file as usize)?;
         self.end_of_file = new_end;
 
         Ok(offsets)
@@ -132,7 +131,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
 
         let offset = self.end_of_file;
         let new_end = encode::<ByteType>(offset, buff, &mut self.tmp_buffer)?;
-        self.file.write_at(&self.tmp_buffer, offset)?;
+        self.file.write_at(&self.tmp_buffer, offset as usize)?;
 
         self.end_of_file = new_end;
         Ok(offset)
