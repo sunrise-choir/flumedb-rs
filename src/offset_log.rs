@@ -55,10 +55,7 @@ impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
     type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let r = read_entry::<ByteType, _>(self.position, |buf, pos| {
-            self.reader.read_at(buf, pos as usize)
-        });
-        match r {
+        match read_entry_mut::<ByteType, _>(self.position, &mut self.reader) {
             Ok(r) => {
                 self.position = r.next;
                 Some(r.entry)
@@ -90,7 +87,7 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
-        read_entry::<ByteType, _>(offset, |buf, pos| self.file.read_at(buf, pos as usize))
+        read_entry::<ByteType, _>(offset, &self.file)
     }
 
     pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
@@ -148,6 +145,9 @@ pub struct Data {
     pub id: u64,
 }
 
+fn size_of_frame_tail<T>() -> usize {
+    size_of::<u32>() + size_of::<T>()
+}
 fn size_of_framing_bytes<T>() -> usize {
     size_of::<u32>() * 2 + size_of::<T>()
 }
@@ -175,6 +175,26 @@ pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, E
     Ok(new_offset)
 }
 
+pub fn validate_entry<T>(offset: usize, data_size: usize, rest: &[u8]) -> Result<u64, Error> {
+    if rest.len() != data_size + size_of_frame_tail::<T>() {
+        return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
+    }
+
+    let sz = (&rest[data_size..]).read_u32::<BigEndian>()?;
+    if sz as usize != data_size {
+        return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
+    }
+
+    let next = (&rest[(data_size + size_of::<u32>())..]).read_uint::<BigEndian>(size_of::<T>())?;
+
+    // `next` should be equal to the offset of the next entry
+    // which may or may not be immediately following this one (I suppose)
+    if next < (offset + size_of::<u32>() + rest.len()) as u64 {
+        return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
+    }
+    Ok(next as u64)
+}
+
 pub fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
     if buf.len() < size_of::<u32>() {
         return Ok(None);
@@ -196,31 +216,53 @@ pub fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
     Ok(Some(data_buffer.to_vec()))
 }
 
-fn read_entry<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+fn read_entry<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+    read_entry_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
+}
+
+fn read_entry_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+    read_entry_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
+}
+
+
+fn read_entry_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
-    let mut frame_bytes = [0, 0, 0, 0];
-    read_at(&mut frame_bytes, offset)?;
+    // Entry is [payload size: u32, payload, payload_size: u32, next_offset: ByteType]
 
-    let payload_size = (&frame_bytes[..]).read_u32::<BigEndian>().unwrap() as usize;
-    let data_size = size_of_framing_bytes::<ByteType>() + payload_size;
+    const HEAD_SIZE: usize = size_of::<u32>();
+    let tail_size = size_of_frame_tail::<ByteType>();
 
-    let mut buf = Vec::with_capacity(data_size);
-    unsafe { buf.set_len(data_size) };
-
-    read_at(&mut buf, offset)?;
-
-    match decode::<ByteType>(&mut buf.into())? {
-        Some(v) => Ok(ReadResult {
-            entry: LogEntry {
-                id: offset,
-                data_buffer: v,
-            },
-            next: offset + data_size as u64,
-        }),
-        None => Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into()),
+    let mut head_bytes = [0; HEAD_SIZE];
+    let n = read_at(&mut head_bytes, offset)?;
+    if n < HEAD_SIZE {
+        return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
+
+    let data_size = (&head_bytes[..]).read_u32::<BigEndian>()? as usize;
+    let to_read = data_size + tail_size;
+
+    let mut buf = Vec::with_capacity(to_read);
+    unsafe { buf.set_len(to_read) };
+
+    let n = read_at(&mut buf, offset + HEAD_SIZE as u64)?;
+    if n < to_read {
+        return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
+    }
+
+    let next = validate_entry::<ByteType>(offset as usize, data_size, &buf)?;
+
+    // Chop the tail off of buf, so it only contains the entry data.
+    buf.truncate(data_size);
+
+    Ok(ReadResult {
+        entry: LogEntry {
+            id: offset,
+            data_buffer: buf,
+        },
+        next: next,
+    })
 }
 
 #[cfg(test)]
