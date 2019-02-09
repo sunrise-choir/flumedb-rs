@@ -22,10 +22,14 @@ pub struct OffsetLog<ByteType> {
     byte_type: PhantomData<ByteType>,
 }
 
+
+#[derive(Debug)] // TODO: derive more traits
 pub struct LogEntry {
     pub id: u64,
     pub data_buffer: Vec<u8>,
 }
+
+#[derive(Debug)]
 pub struct ReadResult {
     pub entry: LogEntry,
     pub next: u64,
@@ -152,16 +156,6 @@ fn size_of_framing_bytes<T>() -> usize {
     size_of::<u32>() * 2 + size_of::<T>()
 }
 
-fn is_valid_frame<T>(buf: &BytesMut, data_size: usize) -> bool {
-    let second_data_size_index = data_size + size_of::<u32>();
-
-    let second_data_size = (&buf[second_data_size_index..])
-        .read_u32::<BigEndian>()
-        .unwrap() as usize;
-
-    second_data_size == data_size
-}
-
 pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error> {
     let chunk_size = size_of_framing_bytes::<T>() + item.len();
     dest.reserve(chunk_size);
@@ -195,32 +189,11 @@ pub fn validate_entry<T>(offset: usize, data_size: usize, rest: &[u8]) -> Result
     Ok(next as u64)
 }
 
-pub fn decode<T>(buf: &mut BytesMut) -> Result<Option<Vec<u8>>, Error> {
-    if buf.len() < size_of::<u32>() {
-        return Ok(None);
-    }
-    let data_size = (&buf[..]).read_u32::<BigEndian>().unwrap() as usize;
-
-    if buf.len() < data_size + size_of_framing_bytes::<T>() {
-        return Ok(None);
-    }
-
-    if !is_valid_frame::<T>(buf, data_size) {
-        return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
-    }
-
-    buf.advance(size_of::<u32>()); //drop off one BytesType
-    let data_buffer = buf.split_to(data_size);
-    buf.advance(size_of::<u32>() + size_of::<T>()); //drop off 2 ByteTypes.
-
-    Ok(Some(data_buffer.to_vec()))
-}
-
-fn read_entry<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+pub fn read_entry<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
     read_entry_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
 }
 
-fn read_entry_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+pub fn read_entry_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
     read_entry_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
 }
 
@@ -269,7 +242,7 @@ where
 mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
-    use offset_log::{decode, encode, size_of_framing_bytes, OffsetLog};
+    use offset_log::*;
 
     use serde_json::*;
 
@@ -331,83 +304,90 @@ mod test {
 
     #[test]
     fn simple() {
-        let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
-        let mut bytes = BytesMut::from(frame_bytes);
+        let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
 
-        let v = decode::<u32>(&mut bytes).unwrap().unwrap();
-        assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r = read_entry::<u32, _>(0, &bytes).unwrap();
+        assert_eq!(r.entry.id, 0);
+        assert_eq!(&r.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(r.next, bytes.len() as u64);
     }
 
     #[test]
     fn simple_u64() {
-        let frame_bytes: &[u8] = &[
+        let bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24,
         ];
-        let mut bytes = BytesMut::from(frame_bytes);
 
-        let v = decode::<u64>(&mut bytes).unwrap().unwrap();
-        assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r = read_entry::<u64, _>(0, &bytes).unwrap();
+        assert_eq!(r.entry.id, 0);
+        assert_eq!(&r.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(r.next, bytes.len() as u64);
     }
 
     #[test]
     fn multiple() {
-        let frame_bytes: &[u8] = &[
+        let bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20, 0, 0, 0, 8, 9, 10, 11, 12,
             13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40,
         ];
-        let mut bytes = BytesMut::from(frame_bytes);
 
-        let v1 = decode::<u32>(&mut bytes).unwrap().unwrap();
-        assert_eq!(&v1, &[1, 2, 3, 4, 5, 6, 7, 8]);
-        let v2 = decode::<u32>(&mut bytes).unwrap().unwrap();
-        assert_eq!(&v2, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        let r1 = read_entry::<u32, _>(0, &bytes).unwrap();
+        assert_eq!(r1.entry.id, 0);
+        assert_eq!(&r1.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(r1.next, 20);
+
+        let r2 = read_entry::<u32, _>(r1.next, &bytes).unwrap();
+        assert_eq!(r2.entry.id, r1.next);
+        assert_eq!(&r2.entry.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(r2.next, 40);
     }
 
     #[test]
     fn multiple_u64() {
-        let frame_bytes: &[u8] = &[
+        let bytes: &[u8] = &[
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 8, 9,
             10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48,
         ];
-        let mut bytes = BytesMut::from(frame_bytes);
 
-        let v1 = decode::<u64>(&mut bytes).unwrap().unwrap();
-        assert_eq!(&v1, &[1, 2, 3, 4, 5, 6, 7, 8]);
-        let v2 = decode::<u64>(&mut bytes).unwrap().unwrap();
-        assert_eq!(&v2, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        let r1 = read_entry::<u64, _>(0, &bytes).unwrap();
+        assert_eq!(r1.entry.id, 0);
+        assert_eq!(&r1.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(r1.next, 24);
+
+        let r2 = read_entry::<u64, _>(r1.next, &bytes).unwrap();
+        assert_eq!(r2.entry.id, r1.next);
+        assert_eq!(&r2.entry.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(r2.next, 48);
     }
 
     #[test]
-    fn returns_ok_none_when_buffer_is_incomplete_frame() {
-        let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0];
-        let result = decode::<u32>(&mut BytesMut::from(frame_bytes));
+    fn read_incomplete_entry() {
+        let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0];
+        let r = read_entry::<u32, _>(0, &bytes);
 
-        match result {
-            Ok(None) => assert!(true),
-            _ => assert!(false),
-        }
+        assert!(r.is_err());
     }
 
     #[test]
-    fn returns_ok_none_when_buffer_less_than_4_bytes() {
-        let frame_bytes: &[u8] = &[0, 0, 0];
-        let result = decode::<u32>(&mut BytesMut::from(frame_bytes));
-
-        match result {
-            Ok(None) => assert!(true),
-            _ => assert!(false),
-        }
+    fn read_very_incomplete_entry() {
+        let bytes: &[u8] = &[0, 0, 0];
+        let r = read_entry::<u32, _>(0, &bytes);
+        assert!(r.is_err());
     }
 
     #[test]
-    fn errors_with_bad_second_size_value() {
-        let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0, 20];
-        let result = decode::<u32>(&mut BytesMut::from(frame_bytes));
+    fn errors_with_bad_second_size_valuen() {
+        let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0, 20];
+        let r = read_entry::<u32, _>(0, &bytes);
 
-        match result {
-            Ok(Some(_)) => assert!(false),
-            _ => assert!(true),
-        }
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn errors_with_bad_next_offset_value() {
+        let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 16];
+        let r = read_entry::<u32, _>(0, &bytes);
+        assert!(r.is_err());
     }
 
     #[test]

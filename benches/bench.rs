@@ -10,7 +10,6 @@ extern crate byteorder;
 extern crate bytes;
 extern crate flumedb;
 
-use bytes::BytesMut;
 use flumedb::flume_log::FlumeLog;
 use flumedb::mem_log::MemLog;
 use flumedb::offset_log::*;
@@ -21,12 +20,10 @@ const NUM_ENTRIES: u32 = 10000;
 fn offset_log_decode(c: &mut Criterion) {
     c.bench_function("offset_log_decode", |b| {
         b.iter(|| {
-            let frame_bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
-            let v = decode::<u32>(&mut BytesMut::from(frame_bytes))
-                .unwrap()
-                .unwrap();
+            let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
+            let r = read_entry::<u32, _>(0, &bytes).unwrap();
 
-            assert_eq!(&v, &[1, 2, 3, 4, 5, 6, 7, 8]);
+            assert_eq!(&r.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
         })
     });
 }
