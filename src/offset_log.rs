@@ -35,27 +35,27 @@ pub struct ReadResult {
     pub next: u64,
 }
 
-pub struct OffsetLogIter<'a, ByteType> {
-    reader: BufOffsetReader<'a, File>,
+pub struct OffsetLogIter<ByteType> {
+    reader: BufOffsetReader<File>,
     position: u64,
     byte_type: PhantomData<ByteType>,
 }
 
-impl<'a, ByteType> OffsetLogIter<'a, ByteType> {
-    pub fn new(file: &'a File) -> OffsetLogIter<'a, ByteType> {
-        OffsetLogIter::with_starting_offset(&file, 0)
+impl<ByteType> OffsetLogIter<ByteType> {
+    pub fn new(file: File) -> OffsetLogIter<ByteType> {
+        OffsetLogIter::with_starting_offset(file, 0)
     }
 
-    pub fn with_starting_offset(file: &File, position: Sequence) -> OffsetLogIter<ByteType> {
+    pub fn with_starting_offset(file: File, position: Sequence) -> OffsetLogIter<ByteType> {
         OffsetLogIter {
-            reader: BufOffsetReader::new(&file),
+            reader: BufOffsetReader::new(file),
             position,
             byte_type: PhantomData,
         }
     }
 }
 
-impl<'a, ByteType> Iterator for OffsetLogIter<'a, ByteType> {
+impl<ByteType> Iterator for OffsetLogIter<ByteType> {
     type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -112,7 +112,9 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn iter(&self) -> OffsetLogIter<ByteType> {
-        OffsetLogIter::new(&self.file)
+        // TODO: what are the chances that try_clone() will fail?
+        //  I'd rather not return a Result<> here.
+        OffsetLogIter::new(self.file.try_clone().unwrap())
     }
 }
 
