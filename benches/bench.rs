@@ -21,7 +21,7 @@ fn offset_log_decode(c: &mut Criterion) {
     c.bench_function("offset_log_decode", |b| {
         b.iter(|| {
             let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
-            let r = read_entry::<u32, _>(0, &bytes).unwrap();
+            let r = read_forward::<u32, _>(0, &bytes).unwrap();
 
             assert_eq!(&r.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
         })
