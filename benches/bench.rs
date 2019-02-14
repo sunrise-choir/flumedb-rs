@@ -35,7 +35,7 @@ fn offset_log_append(c: &mut Criterion) {
 
             let test_vec = b"{\"value\": 1}";
 
-            let mut offset_log = OffsetLog::<u32>::new(filename);
+            let mut offset_log = OffsetLog::<u32>::new(filename).unwrap();
 
             let offsets: Vec<u64> = (0..NUM_ENTRIES)
                 .map(|_| offset_log.append(test_vec).unwrap())
@@ -60,7 +60,7 @@ fn offset_log_append_batch(c: &mut Criterion) {
             let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
             std::fs::remove_file(filename.clone()).unwrap_or(());
 
-            let mut offset_log = OffsetLog::<u32>::new(filename);
+            let mut offset_log = OffsetLog::<u32>::new(filename).unwrap();
 
             let result = offset_log.append_batch(&test_vecs).unwrap();
 
@@ -75,7 +75,7 @@ fn offset_log_get(c: &mut Criterion) {
 
     let test_vec = b"{\"value\": 1}";
 
-    let mut offset_log = OffsetLog::<u32>::new(filename);
+    let mut offset_log = OffsetLog::<u32>::new(filename).unwrap();
 
     let offsets: Vec<u64> = (0..NUM_ENTRIES)
         .map(|_| offset_log.append(test_vec).unwrap())
@@ -97,7 +97,7 @@ fn offset_log_iter(c: &mut Criterion) {
 
     let test_vec = b"{\"value\": 1}";
 
-    let mut offset_log = OffsetLog::<u32>::new(filename.clone());
+    let mut offset_log = OffsetLog::<u32>::new(filename.clone()).unwrap();
 
     let offsets: Vec<u64> = (0..NUM_ENTRIES)
         .map(|_| offset_log.append(test_vec).unwrap())

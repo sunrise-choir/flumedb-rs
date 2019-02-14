@@ -4,6 +4,7 @@ use bytes::{BufMut, BytesMut};
 use flume_log::*;
 use std::fs::{File, OpenOptions};
 use std::io;
+use std::io::{Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem::size_of;
 
@@ -11,6 +12,7 @@ use std::mem::size_of;
 pub enum FlumeOffsetLogError {
     #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
     CorruptLogFile {},
+
     #[fail(display = "The decode buffer passed to decode was too small")]
     DecodeBufferSizeTooSmall {},
 }
@@ -18,6 +20,7 @@ pub enum FlumeOffsetLogError {
 pub struct OffsetLog<ByteType> {
     pub file: File,
     end_of_file: u64,
+    last_offset: Option<u64>,
     tmp_buffer: BytesMut,
     byte_type: PhantomData<ByteType>,
 }
@@ -83,24 +86,34 @@ impl<ByteType> Iterator for OffsetLogIter<ByteType> {
 }
 
 impl<ByteType> OffsetLog<ByteType> {
-    pub fn new(path: String) -> OffsetLog<ByteType> {
+
+    pub fn new(path: String) -> Result<OffsetLog<ByteType>, Error> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(path.clone())
-            .expect("Unable to open file");
+            .open(&path)?;
 
-        let file_length = std::fs::metadata(path)
-            .expect("Unable to get metadata of file")
-            .len();
+        OffsetLog::from_file(file)
+    }
 
-        OffsetLog {
+    pub fn from_file(mut file: File) -> Result<OffsetLog<ByteType>, Error> {
+        let file_length = file.seek(SeekFrom::End(0))?;
+
+        let last_offset = if file_length > 0 {
+            let frame = read_prev_frame::<ByteType, _>(file_length, |b, o| file.read_at(b, o))?;
+            Some(frame.offset)
+        } else {
+            None
+        };
+
+        Ok(OffsetLog {
             file,
             end_of_file: file_length,
+            last_offset,
             tmp_buffer: BytesMut::new(),
             byte_type: PhantomData,
-        }
+        })
     }
 
     pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
@@ -117,6 +130,8 @@ impl<ByteType> OffsetLog<ByteType> {
             offsets.push(offset);
             encode::<ByteType>(offset, &buff, &mut bytes)
         })?;
+
+        offsets.last().map(|o| self.last_offset = Some(*o));
 
         self.file.write_at(&bytes, self.end_of_file)?;
         self.end_of_file = new_end;
@@ -136,8 +151,8 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
         self.read(seq_num).map(|r| r.entry.data)
     }
 
-    fn latest(&self) -> u64 {
-        unimplemented!()
+    fn latest(&self) -> Option<u64> {
+        self.last_offset
     }
 
     fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
@@ -150,6 +165,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
         self.file.write_at(&self.tmp_buffer, offset)?;
 
         self.end_of_file = new_end;
+        self.last_offset = Some(offset);
         Ok(offset)
     }
 
@@ -171,11 +187,10 @@ pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, E
     dest.put_u32_be(item.len() as u32);
     dest.put_slice(&item);
     dest.put_u32_be(item.len() as u32);
-    let new_offset = offset + chunk_size as u64;
-    // self.length += chunk_size as u64;
+    let next_offset = offset + chunk_size as u64;
 
-    dest.put_uint_be(new_offset, size_of::<T>());
-    Ok(new_offset)
+    dest.put_uint_be(next_offset, size_of::<T>());
+    Ok(next_offset)
 }
 
 pub fn validate_entry<T>(offset: u64, data_size: usize, rest: &[u8]) -> Result<u64, Error> {
@@ -311,13 +326,21 @@ where
     })
 }
 
+// extern crate tempfile;
 #[cfg(test)]
 mod test {
     use bytes::BytesMut;
     use flume_log::FlumeLog;
     use offset_log::*;
 
-    use serde_json::*;
+    use serde_json::{Value, from_slice};
+
+    extern crate tempfile;
+    use self::tempfile::tempfile;
+
+    fn temp_offset_log() -> OffsetLog<u32> {
+        OffsetLog::<u32>::from_file(tempfile().unwrap()).unwrap()
+    }
 
     #[test]
     fn simple_encode() {
@@ -482,8 +505,10 @@ mod test {
 
     #[test]
     fn read_from_a_file() {
-        let offset_log = OffsetLog::<u32>::new("./db/test.offset".to_string());
-        let result = offset_log
+        let log = OffsetLog::<u32>::new("./db/test.offset".to_string()).unwrap();
+        assert_eq!(log.latest(), Some(207));
+
+        let result = log
             .get(0)
             .and_then(|val| from_slice(&val).map_err(|err| err.into()))
             .map(|val: Value| match val["value"] {
@@ -493,37 +518,34 @@ mod test {
             .unwrap();
         assert_eq!(result, 0);
     }
+
     #[test]
-    fn write_to_a_file() {
-        let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
-        std::fs::remove_file(filename.clone())
-            .or::<Result<()>>(Ok(()))
-            .unwrap();
+    fn write_to_a_file() -> Result<(), Error> {
 
         let test_vec = b"{\"value\": 1}";
 
-        let mut offset_log = OffsetLog::<u32>::new(filename);
-        let result = offset_log
-            .append(test_vec)
-            .and_then(|_| offset_log.get(0))
-            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
-            .map(|val: Value| match val["value"] {
-                Value::Number(ref num) => {
-                    let result = num.as_u64().unwrap();
-                    result
-                }
-                _ => panic!(),
-            })
-            .unwrap();
-        assert_eq!(result, 1);
-    }
-    #[test]
-    fn batch_write_to_a_file() {
-        let filename = "/tmp/test123.offset".to_string(); //careful not to reuse this filename, threads might make things weird
-        std::fs::remove_file(filename.clone())
-            .or::<Result<()>>(Ok(()))
-            .unwrap();
+        let mut log = temp_offset_log();
+        assert_eq!(log.latest(), None);
+        let offset = log.append(test_vec)?;
+        assert_eq!(offset, 0);
+        assert_eq!(log.latest(), Some(0));
 
+        let offset = log.append(test_vec)?;
+        assert_eq!(log.latest(), Some(offset));
+
+        let v: Value = from_slice(&log.get(0)?)?;
+        let result = match v["value"] {
+            Value::Number(ref num) => {
+                num.as_u64().unwrap()
+            }
+            _ => panic!(),
+        };
+        assert_eq!(result, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn batch_write_to_a_file() -> Result<(), Error> {
         let test_vec: &[u8] = b"{\"value\": 1}";
 
         let mut test_vecs = Vec::new();
@@ -532,7 +554,7 @@ mod test {
             test_vecs.push(test_vec);
         }
 
-        let mut offset_log = OffsetLog::<u32>::new(filename);
+        let mut offset_log = temp_offset_log();
         let result = offset_log
             .append_batch(test_vecs.as_slice())
             .and_then(|sequences| {
@@ -554,15 +576,12 @@ mod test {
             })
             .unwrap();
         assert_eq!(result, 1);
+        Ok(())
     }
-    #[test]
-    fn arbitrary_read_and_write_to_a_file() {
-        let filename = "/tmp/test124.offset".to_string(); //careful not to reuse this filename, threads might make things weird
-        std::fs::remove_file(filename.clone())
-            .or::<Result<()>>(Ok(()))
-            .unwrap();
 
-        let mut offset_log = OffsetLog::<u32>::new(filename);
+    #[test]
+    fn arbitrary_read_and_write_to_a_file() -> Result<(), Error> {
+        let mut offset_log = temp_offset_log();
 
         let data_to_write = vec![b"{\"value\": 1}", b"{\"value\": 2}", b"{\"value\": 3}"];
 
@@ -586,12 +605,13 @@ mod test {
             .sum();
 
         assert_eq!(sum, 6);
+        Ok(())
     }
 
     #[test]
     fn offset_log_as_iter() {
         let filename = "./db/test.offset".to_string();
-        let log = OffsetLog::<u32>::new(filename);
+        let log = OffsetLog::<u32>::new(filename).unwrap();
 
         let log_iter = log.iter();
 

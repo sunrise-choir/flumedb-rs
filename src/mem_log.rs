@@ -23,17 +23,21 @@ impl FlumeLog for MemLog {
     fn clear(&mut self, seq: u64) {
         self.log[seq as usize] = Vec::new();
     }
-    fn latest(&self) -> u64 {
-        self.log.len() as u64
+    fn latest(&self) -> Option<u64> {
+        if self.log.len() == 0 {
+            None
+        } else {
+            Some(self.log.len() as u64 - 1)
+        }
     }
     fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
-        let seq = self.latest();
+        let seq = self.log.len();
         let mut vec = Vec::new();
         vec.extend_from_slice(buff);
 
         self.log.push(vec);
 
-        Ok(seq)
+        Ok(seq as u64)
     }
 }
 
