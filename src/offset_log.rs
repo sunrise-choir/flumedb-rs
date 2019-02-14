@@ -105,7 +105,7 @@ impl<ByteType> OffsetLog<ByteType> {
             encode::<ByteType>(offset, &buff, &mut bytes)
         })?;
 
-        self.file.write_at(&bytes, self.end_of_file as usize)?;
+        self.file.write_at(&bytes, self.end_of_file)?;
         self.end_of_file = new_end;
 
         Ok(offsets)
@@ -134,7 +134,7 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
 
         let offset = self.end_of_file;
         let new_end = encode::<ByteType>(offset, buff, &mut self.tmp_buffer)?;
-        self.file.write_at(&self.tmp_buffer, offset as usize)?;
+        self.file.write_at(&self.tmp_buffer, offset)?;
 
         self.end_of_file = new_end;
         Ok(offset)
@@ -171,40 +171,40 @@ pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, E
     Ok(new_offset)
 }
 
-pub fn validate_entry<T>(offset: usize, data_size: usize, rest: &[u8]) -> Result<u64, Error> {
+pub fn validate_entry<T>(offset: u64, data_size: usize, rest: &[u8]) -> Result<u64, Error> {
     if rest.len() != data_size + size_of_frame_tail::<T>() {
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let sz = (&rest[data_size..]).read_u32::<BigEndian>()?;
-    if sz as usize != data_size {
+    let sz = (&rest[data_size..]).read_u32::<BigEndian>()? as usize;
+    if sz != data_size {
         return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
     }
 
-    let next = (&rest[(data_size + size_of::<u32>())..]).read_uint::<BigEndian>(size_of::<T>())?;
+    let next = (&rest[(data_size + size_of::<u32>())..]).read_uint::<BigEndian>(size_of::<T>())? as u64;
 
     // `next` should be equal to the offset of the next entry
     // which may or may not be immediately following this one (I suppose)
-    if next < (offset + size_of::<u32>() + rest.len()) as u64 {
+    if next < offset + size_of::<u32>() as u64 + rest.len() as u64 {
         return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
     }
-    Ok(next as u64)
+    Ok(next)
 }
 
 pub fn read_forward<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
-    read_forward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
+    read_forward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
 pub fn read_forward_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
-    read_forward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
+    read_forward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
 pub fn read_backward<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
-    read_backward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
+    read_backward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
 pub fn read_backward_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
-    read_backward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o as usize))
+    read_backward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
 fn read_forward_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
@@ -233,7 +233,7 @@ where
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let next = validate_entry::<ByteType>(offset as usize, data_size, &buf)?;
+    let next = validate_entry::<ByteType>(offset, data_size, &buf)?;
 
     // Chop the tail off of buf, so it only contains the entry data.
     buf.truncate(data_size);
@@ -279,7 +279,7 @@ where
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let id = offset as usize - tail_size - data_size - size_of::<u32>();
+    let id = offset - tail_size as u64 - data_size as u64 - size_of::<u32>() as u64;
 
     Ok(ReadResult {
         entry: LogEntry {
