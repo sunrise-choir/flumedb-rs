@@ -22,11 +22,24 @@ pub struct OffsetLog<ByteType> {
     byte_type: PhantomData<ByteType>,
 }
 
+// A Frame is like a LogEntry, but without the data
+#[derive(Debug)]
+pub struct Frame {
+    pub offset: u64,
+    pub data_size: usize
+}
+
+impl Frame {
+    fn data_start(&self) -> u64 {
+        self.offset + size_of::<u32>() as u64
+    }
+}
+
 
 #[derive(Debug)] // TODO: derive more traits
 pub struct LogEntry {
-    pub id: u64,
-    pub data_buffer: Vec<u8>,
+    pub offset: u64,
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -59,7 +72,7 @@ impl<ByteType> Iterator for OffsetLogIter<ByteType> {
     type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match read_forward_mut::<ByteType, _>(self.position, &mut self.reader) {
+        match read_next_mut::<ByteType, _>(self.position, &mut self.reader) {
             Ok(r) => {
                 self.position = r.next;
                 Some(r.entry)
@@ -91,7 +104,7 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
-        read_forward::<ByteType, _>(offset, &self.file)
+        read_next::<ByteType, _>(offset, &self.file)
     }
 
     pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
@@ -120,7 +133,7 @@ impl<ByteType> OffsetLog<ByteType> {
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
     fn get(&self, seq_num: u64) -> Result<Vec<u8>, Error> {
-        self.read(seq_num).map(|r| r.entry.data_buffer)
+        self.read(seq_num).map(|r| r.entry.data)
     }
 
     fn latest(&self) -> u64 {
@@ -143,12 +156,6 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
     fn clear(&mut self, _seq_num: u64) {
         unimplemented!();
     }
-}
-
-#[derive(Debug)]
-pub struct Data {
-    pub data_buffer: Vec<u8>,
-    pub id: u64,
 }
 
 fn size_of_frame_tail<T>() -> usize {
@@ -191,30 +198,45 @@ pub fn validate_entry<T>(offset: u64, data_size: usize, rest: &[u8]) -> Result<u
     Ok(next)
 }
 
-pub fn read_forward<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
-    read_forward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
+pub fn read_next<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+    read_next_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_forward_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
-    read_forward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
+pub fn read_next_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+    read_next_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_backward<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
-    read_backward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
+pub fn read_prev<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+    read_prev_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_backward_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
-    read_backward_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
+pub fn read_prev_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+    read_prev_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-fn read_forward_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+fn read_next_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+where
+    F: FnMut(&mut [u8], u64) -> io::Result<usize>,
+{
+    let frame = read_next_frame::<ByteType, _>(offset, &mut read_at)?;
+    read_entry::<ByteType, _>(&frame, &mut read_at)
+}
+
+fn read_prev_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+where
+    F: FnMut(&mut [u8], u64) -> io::Result<usize>,
+{
+    let frame = read_prev_frame::<ByteType, _>(offset, &mut read_at)?;
+    read_entry::<ByteType, _>(&frame, &mut read_at)
+}
+
+fn read_next_frame<ByteType, F>(offset: u64, read_at: &mut F) -> Result<Frame, Error>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
     // Entry is [payload size: u32, payload, payload_size: u32, next_offset: ByteType]
 
     const HEAD_SIZE: usize = size_of::<u32>();
-    let tail_size = size_of_frame_tail::<ByteType>();
 
     let mut head_bytes = [0; HEAD_SIZE];
     let n = read_at(&mut head_bytes, offset)?;
@@ -223,31 +245,13 @@ where
     }
 
     let data_size = (&head_bytes[..]).read_u32::<BigEndian>()? as usize;
-    let to_read = data_size + tail_size;
-
-    let mut buf = Vec::with_capacity(to_read);
-    unsafe { buf.set_len(to_read) };
-
-    let n = read_at(&mut buf, offset + HEAD_SIZE as u64)?;
-    if n < to_read {
-        return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
-    }
-
-    let next = validate_entry::<ByteType>(offset, data_size, &buf)?;
-
-    // Chop the tail off of buf, so it only contains the entry data.
-    buf.truncate(data_size);
-
-    Ok(ReadResult {
-        entry: LogEntry {
-            id: offset,
-            data_buffer: buf,
-        },
-        next: next,
+    Ok(Frame {
+        offset,
+        data_size
     })
 }
 
-fn read_backward_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+fn read_prev_frame<ByteType, F>(offset: u64, mut read_at: F) -> Result<Frame, Error>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -269,27 +273,43 @@ where
         return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
     }
 
-    let mut buf = Vec::with_capacity(data_size);
-    unsafe { buf.set_len(data_size) };
-
     let data_start = offset - tail_size as u64 - data_size as u64;
 
-    let n = read_at(&mut buf, data_start)?;
-    if n < data_size {
-        return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
-    }
-
-    let id = offset - tail_size as u64 - data_size as u64 - size_of::<u32>() as u64;
-
-    Ok(ReadResult {
-        entry: LogEntry {
-            id: id as u64,
-            data_buffer: buf,
-        },
-        next: offset, // I guess
+    Ok(Frame {
+        offset: data_start - size_of::<u32>() as u64,
+        data_size
     })
 }
 
+fn read_entry<ByteType, F>(frame: &Frame, read_at: &mut F) -> Result<ReadResult, Error>
+where
+    F: FnMut(&mut [u8], u64) -> io::Result<usize>,
+{
+    // Entry is [payload size: u32, payload, payload_size: u32, next_offset: ByteType]
+    let tail_size = size_of_frame_tail::<ByteType>();
+    let to_read = frame.data_size + tail_size;
+
+    let mut buf = Vec::with_capacity(to_read);
+    unsafe { buf.set_len(to_read) };
+
+    let n = read_at(&mut buf, frame.data_start())?;
+    if n < to_read {
+        return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
+    }
+
+    let next = validate_entry::<ByteType>(frame.offset, frame.data_size, &buf)?;
+
+    // Chop the tail off of buf, so it only contains the entry data.
+    buf.truncate(frame.data_size);
+
+    Ok(ReadResult {
+        entry: LogEntry {
+            offset: frame.offset,
+            data: buf,
+        },
+        next: next,
+    })
+}
 
 #[cfg(test)]
 mod test {
@@ -359,9 +379,9 @@ mod test {
     fn simple() {
         let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 20];
 
-        let r = read_forward::<u32, _>(0, &bytes).unwrap();
-        assert_eq!(r.entry.id, 0);
-        assert_eq!(&r.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r = read_next::<u32, _>(0, &bytes).unwrap();
+        assert_eq!(r.entry.offset, 0);
+        assert_eq!(&r.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(r.next, bytes.len() as u64);
     }
 
@@ -371,9 +391,9 @@ mod test {
             0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 24,
         ];
 
-        let r = read_forward::<u64, _>(0, &bytes).unwrap();
-        assert_eq!(r.entry.id, 0);
-        assert_eq!(&r.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r = read_next::<u64, _>(0, &bytes).unwrap();
+        assert_eq!(r.entry.offset, 0);
+        assert_eq!(&r.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(r.next, bytes.len() as u64);
     }
 
@@ -384,23 +404,23 @@ mod test {
             13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 40,
         ];
 
-        let r1 = read_forward::<u32, _>(0, &bytes).unwrap();
-        assert_eq!(r1.entry.id, 0);
-        assert_eq!(&r1.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r1 = read_next::<u32, _>(0, &bytes).unwrap();
+        assert_eq!(r1.entry.offset, 0);
+        assert_eq!(&r1.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(r1.next, 20);
 
-        let r2 = read_forward::<u32, _>(r1.next, &bytes).unwrap();
-        assert_eq!(r2.entry.id, r1.next);
-        assert_eq!(&r2.entry.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        let r2 = read_next::<u32, _>(r1.next, &bytes).unwrap();
+        assert_eq!(r2.entry.offset, r1.next);
+        assert_eq!(&r2.entry.data, &[9, 10, 11, 12, 13, 14, 15, 16]);
         assert_eq!(r2.next, 40);
 
-        let r3 = read_backward::<u32, _>(bytes.len() as u64, &bytes).unwrap();
-        assert_eq!(r3.entry.id, r1.next);
-        assert_eq!(&r3.entry.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        let r3 = read_prev::<u32, _>(bytes.len() as u64, &bytes).unwrap();
+        assert_eq!(r3.entry.offset, r1.next);
+        assert_eq!(&r3.entry.data, &[9, 10, 11, 12, 13, 14, 15, 16]);
 
-        let r4 = read_backward::<u32, _>(r3.entry.id, &bytes).unwrap();
-        assert_eq!(r4.entry.id, 0);
-        assert_eq!(&r4.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r4 = read_prev::<u32, _>(r3.entry.offset, &bytes).unwrap();
+        assert_eq!(r4.entry.offset, 0);
+        assert_eq!(&r4.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
 
     }
 
@@ -411,29 +431,29 @@ mod test {
             10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 48,
         ];
 
-        let r1 = read_forward::<u64, _>(0, &bytes).unwrap();
-        assert_eq!(r1.entry.id, 0);
-        assert_eq!(&r1.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r1 = read_next::<u64, _>(0, &bytes).unwrap();
+        assert_eq!(r1.entry.offset, 0);
+        assert_eq!(&r1.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(r1.next, 24);
 
-        let r2 = read_forward::<u64, _>(r1.next, &bytes).unwrap();
-        assert_eq!(r2.entry.id, r1.next);
-        assert_eq!(&r2.entry.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        let r2 = read_next::<u64, _>(r1.next, &bytes).unwrap();
+        assert_eq!(r2.entry.offset, r1.next);
+        assert_eq!(&r2.entry.data, &[9, 10, 11, 12, 13, 14, 15, 16]);
         assert_eq!(r2.next, 48);
 
-        let r3 = read_backward::<u64, _>(bytes.len() as u64, &bytes).unwrap();
-        assert_eq!(r3.entry.id, r1.next);
-        assert_eq!(&r3.entry.data_buffer, &[9, 10, 11, 12, 13, 14, 15, 16]);
+        let r3 = read_prev::<u64, _>(bytes.len() as u64, &bytes).unwrap();
+        assert_eq!(r3.entry.offset, r1.next);
+        assert_eq!(&r3.entry.data, &[9, 10, 11, 12, 13, 14, 15, 16]);
 
-        let r4 = read_backward::<u64, _>(r3.entry.id, &bytes).unwrap();
-        assert_eq!(r4.entry.id, 0);
-        assert_eq!(&r4.entry.data_buffer, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let r4 = read_prev::<u64, _>(r3.entry.offset, &bytes).unwrap();
+        assert_eq!(r4.entry.offset, 0);
+        assert_eq!(&r4.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]
     fn read_incomplete_entry() {
         let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0];
-        let r = read_forward::<u32, _>(0, &bytes);
+        let r = read_next::<u32, _>(0, &bytes);
 
         assert!(r.is_err());
     }
@@ -441,14 +461,14 @@ mod test {
     #[test]
     fn read_very_incomplete_entry() {
         let bytes: &[u8] = &[0, 0, 0];
-        let r = read_forward::<u32, _>(0, &bytes);
+        let r = read_next::<u32, _>(0, &bytes);
         assert!(r.is_err());
     }
 
     #[test]
     fn errors_with_bad_second_size_valuen() {
         let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 9, 0, 0, 0, 20];
-        let r = read_forward::<u32, _>(0, &bytes);
+        let r = read_next::<u32, _>(0, &bytes);
 
         assert!(r.is_err());
     }
@@ -456,7 +476,7 @@ mod test {
     #[test]
     fn errors_with_bad_next_offset_value() {
         let bytes: &[u8] = &[0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 8, 0, 0, 0, 16];
-        let r = read_forward::<u32, _>(0, &bytes);
+        let r = read_next::<u32, _>(0, &bytes);
         assert!(r.is_err());
     }
 
@@ -577,7 +597,7 @@ mod test {
 
         let sum: u64 = log_iter
             .take(5)
-            .map(|val| val.data_buffer)
+            .map(|val| val.data)
             .map(|val| from_slice(&val).unwrap())
             .map(|val: Value| match val["value"] {
                 Value::Number(ref num) => {
