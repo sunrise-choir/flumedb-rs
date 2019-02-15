@@ -2,17 +2,15 @@
 //!# flumedb
 //!
 //!
+extern crate buffered_offset_reader;
 extern crate byteorder;
 extern crate bytes;
 #[macro_use]
 extern crate failure;
-extern crate serde;
-#[macro_use]
 extern crate log;
-extern crate serde_json;
-#[macro_use]
+extern crate serde;
 extern crate serde_derive;
-extern crate tokio_codec;
+extern crate serde_json;
 
 pub mod flume_log;
 pub mod flume_view;

@@ -17,8 +17,8 @@ pub enum FlumeLogError {
 pub type Sequence = u64;
 
 pub trait FlumeLog {
-    fn get(&mut self, seq: Sequence) -> Result<Vec<u8>, Error>;
+    fn get(&self, seq: Sequence) -> Result<Vec<u8>, Error>;
     fn clear(&mut self, seq: Sequence);
-    fn latest(&self) -> Sequence;
+    fn latest(&self) -> Option<Sequence>;
     fn append(&mut self, buff: &[u8]) -> Result<Sequence, Error>;
 }
