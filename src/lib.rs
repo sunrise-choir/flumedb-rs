@@ -2,6 +2,7 @@
 //!# flumedb
 //!
 //!
+extern crate bidir_iter;
 extern crate buffered_offset_reader;
 extern crate byteorder;
 extern crate bytes;

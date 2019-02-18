@@ -1,3 +1,5 @@
+pub use bidir_iter::BidirIterator;
+
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetWrite};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
@@ -38,7 +40,6 @@ impl Frame {
     }
 }
 
-
 #[derive(Debug)] // TODO: derive more traits
 pub struct LogEntry {
     pub offset: u64,
@@ -51,39 +52,6 @@ pub struct ReadResult {
     pub next: u64,
 }
 
-pub struct OffsetLogIter<ByteType> {
-    reader: BufOffsetReader<File>,
-    position: u64,
-    byte_type: PhantomData<ByteType>,
-}
-
-impl<ByteType> OffsetLogIter<ByteType> {
-    pub fn new(file: File) -> OffsetLogIter<ByteType> {
-        OffsetLogIter::with_starting_offset(file, 0)
-    }
-
-    pub fn with_starting_offset(file: File, position: Sequence) -> OffsetLogIter<ByteType> {
-        OffsetLogIter {
-            reader: BufOffsetReader::new(file),
-            position,
-            byte_type: PhantomData,
-        }
-    }
-}
-
-impl<ByteType> Iterator for OffsetLogIter<ByteType> {
-    type Item = LogEntry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match read_next_mut::<ByteType, _>(self.position, &mut self.reader) {
-            Ok(r) => {
-                self.position = r.next;
-                Some(r.entry)
-            }
-            Err(_) => None,
-        }
-    }
-}
 
 impl<ByteType> OffsetLog<ByteType> {
 
@@ -116,6 +84,10 @@ impl<ByteType> OffsetLog<ByteType> {
         })
     }
 
+    pub fn end(&self) -> u64 {
+        self.end_of_file
+    }
+
     pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
         read_next::<ByteType, _>(offset, &self.file)
     }
@@ -144,6 +116,12 @@ impl<ByteType> OffsetLog<ByteType> {
         //  I'd rather not return a Result<> here.
         OffsetLogIter::new(self.file.try_clone().unwrap())
     }
+
+    pub fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
+        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(),
+                                            offset)
+    }
+
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
@@ -173,6 +151,47 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
         unimplemented!();
     }
 }
+
+pub struct OffsetLogIter<ByteType> {
+    reader: BufOffsetReader<File>,
+    current: u64,
+    next: u64,
+    byte_type: PhantomData<ByteType>,
+}
+
+impl<ByteType> OffsetLogIter<ByteType> {
+    pub fn new(file: File) -> OffsetLogIter<ByteType> {
+        OffsetLogIter::with_starting_offset(file, 0)
+    }
+
+    pub fn with_starting_offset(file: File, offset: u64) -> OffsetLogIter<ByteType> {
+        OffsetLogIter {
+            reader: BufOffsetReader::new(file),
+            current: offset,
+            next: offset,
+            byte_type: PhantomData,
+        }
+    }
+}
+
+impl<ByteType> BidirIterator for OffsetLogIter<ByteType> {
+    type Item = LogEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.current = self.next;
+        let r = read_next_mut::<u32, _>(self.current, &mut self.reader).ok()?;
+        self.next = r.next;
+        Some(r.entry)
+    }
+
+    fn prev(&mut self) -> Option<Self::Item> {
+        self.next = self.current;
+        let r = read_prev_mut::<u32, _>(self.current, &mut self.reader).ok()?;
+        self.current = r.entry.offset;
+        Some(r.entry)
+    }
+}
+
 
 fn size_of_frame_tail<T>() -> usize {
     size_of::<u32>() + size_of::<T>()
@@ -613,7 +632,7 @@ mod test {
         let filename = "./db/test.offset".to_string();
         let log = OffsetLog::<u32>::new(filename).unwrap();
 
-        let log_iter = log.iter();
+        let log_iter = log.iter().forward();
 
         let sum: u64 = log_iter
             .take(5)
@@ -630,5 +649,58 @@ mod test {
 
         assert_eq!(sum, 10);
     }
+
+    #[test]
+    fn bidir_iter() -> Result<(), Error> {
+
+        let mut log = temp_offset_log();
+        log.append(b"abc")?;
+        log.append(b"def")?;
+        log.append(b"123")?;
+        log.append(b"456")?;
+
+        let mut iter = log.iter();
+        assert_eq!(iter.next().unwrap().data, b"abc");
+        assert_eq!(iter.next().unwrap().data, b"def");
+        assert_eq!(iter.next().unwrap().data, b"123");
+        assert_eq!(iter.next().unwrap().data, b"456");
+        assert!(iter.next().is_none());
+        assert_eq!(iter.prev().unwrap().data, b"456");
+        assert_eq!(iter.prev().unwrap().data, b"123");
+        assert_eq!(iter.prev().unwrap().data, b"def");
+        assert_eq!(iter.prev().unwrap().data, b"abc");
+        assert!(iter.prev().is_none());
+        assert_eq!(iter.next().unwrap().data, b"abc");
+
+
+        let mut iter = log
+            .iter()
+            .filter(|e| e.offset % 10 == 0)
+            .map(|e| e.data);
+        assert_eq!(iter.next().unwrap(), b"abc");
+        assert_eq!(iter.next().unwrap(), b"123");
+        assert!(iter.next().is_none());
+        assert_eq!(iter.prev().unwrap(), b"123");
+
+
+        let forward_offsets: Vec<u64> = log
+            .iter()
+            .forward()
+            .map(|e| e.offset)
+            .collect();
+
+        assert_eq!(forward_offsets, &[0, 15, 30, 45]);
+
+        let backward_offsets: Vec<u64> = log
+            .iter_at_offset(log.end())
+            .backward()
+            .map(|e| e.offset)
+            .collect();
+
+        assert_eq!(backward_offsets, &[45, 30, 15, 0]);
+
+        Ok(())
+    }
+
 
 }
