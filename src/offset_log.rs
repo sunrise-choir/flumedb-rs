@@ -632,9 +632,8 @@ mod test {
         let filename = "./db/test.offset".to_string();
         let log = OffsetLog::<u32>::new(filename).unwrap();
 
-        let log_iter = log.iter().forward();
-
-        let sum: u64 = log_iter
+        let sum: u64 = log.iter()
+            .forward()
             .take(5)
             .map(|val| val.data)
             .map(|val| from_slice(&val).unwrap())
@@ -682,22 +681,31 @@ mod test {
         assert!(iter.next().is_none());
         assert_eq!(iter.prev().unwrap(), b"123");
 
+        let mut iter = log.iter().map(|e| e.offset);
 
-        let forward_offsets: Vec<u64> = log
-            .iter()
-            .forward()
-            .map(|e| e.offset)
-            .collect();
-
+        // Same iter forward and back
+        let forward_offsets: Vec<u64> = iter.forward().collect();
         assert_eq!(forward_offsets, &[0, 15, 30, 45]);
 
+        let backward_offsets: Vec<u64> = iter.backward().collect();
+        assert_eq!(backward_offsets, &[45, 30, 15, 0]);
+
+        // Same iter, take two
+        let forward_offsets: Vec<u64> = iter.forward().take(2).collect();
+        assert_eq!(forward_offsets, &[0, 15]);
+
+        // Same iter, two more
+        let forward_offsets: Vec<u64> = iter.forward().take(2).collect();
+        assert_eq!(forward_offsets, &[30, 45]);
+
+        // New backward iter, starting at eof
         let backward_offsets: Vec<u64> = log
             .iter_at_offset(log.end())
             .backward()
             .map(|e| e.offset)
             .collect();
-
         assert_eq!(backward_offsets, &[45, 30, 15, 0]);
+
 
         Ok(())
     }

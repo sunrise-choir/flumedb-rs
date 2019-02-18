@@ -107,9 +107,7 @@ fn offset_log_iter(c: &mut Criterion) {
 
     c.bench_function("offset log iter", move |b| {
         b.iter(|| {
-            let log_iter = offset_log.iter().forward();
-
-            let sum: u64 = log_iter
+            let sum: u64 = offset_log.iter().forward()
                 .map(|val| val.data)
                 .map(|val| from_slice(&val).unwrap())
                 .map(|val: Value| match val["value"] {
