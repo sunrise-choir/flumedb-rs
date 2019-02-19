@@ -16,7 +16,7 @@ buffered_offset_reader = "0.6"
 bidir_iter = "0.2"
 
 [dev-dependencies]
-criterion = "0.2.5"
+criterion = "~0.2.10"
 tempfile = "3.0"
 
 [[bench]]
