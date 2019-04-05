@@ -9,6 +9,7 @@ use std::io;
 use std::io::{Seek, SeekFrom};
 use std::marker::PhantomData;
 use std::mem::size_of;
+use std::path::Path;
 
 #[derive(Debug, Fail)]
 pub enum FlumeOffsetLogError {
@@ -55,11 +56,19 @@ pub struct ReadResult {
 
 impl<ByteType> OffsetLog<ByteType> {
 
-    pub fn new(path: String) -> Result<OffsetLog<ByteType>, Error> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, Error> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
+            .open(&path)?;
+
+        OffsetLog::from_file(file)
+    }
+
+    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, Error> {
+        let file = OpenOptions::new()
+            .read(true)
             .open(&path)?;
 
         OffsetLog::from_file(file)
@@ -524,7 +533,7 @@ mod test {
 
     #[test]
     fn read_from_a_file() {
-        let log = OffsetLog::<u32>::new("./db/test.offset".to_string()).unwrap();
+        let log = OffsetLog::<u32>::new("./db/test.offset").unwrap();
         assert_eq!(log.latest(), Some(207));
 
         let result = log
@@ -537,6 +546,25 @@ mod test {
             .unwrap();
         assert_eq!(result, 0);
     }
+
+    #[test]
+    fn open_read_only() {
+        let mut log = OffsetLog::<u32>::open_read_only("./db/test.offset").unwrap();
+        assert_eq!(log.latest(), Some(207));
+
+        let result = log
+            .get(0)
+            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
+            .map(|val: Value| match val["value"] {
+                Value::Number(ref num) => num.as_u64().unwrap(),
+                _ => panic!(),
+            })
+            .unwrap();
+        assert_eq!(result, 0);
+
+        assert!(log.append(&[1,2,3,4]).is_err());
+    }
+
 
     #[test]
     fn write_to_a_file() -> Result<(), Error> {
@@ -629,8 +657,7 @@ mod test {
 
     #[test]
     fn offset_log_as_iter() {
-        let filename = "./db/test.offset".to_string();
-        let log = OffsetLog::<u32>::new(filename).unwrap();
+        let log = OffsetLog::<u32>::new("./db/test.offset").unwrap();
 
         let sum: u64 = log.iter()
             .forward()
