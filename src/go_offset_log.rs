@@ -170,20 +170,13 @@ impl GoOffsetLogIter {
     }
 }
 
-impl BidirIterator for GoOffsetLogIter {
+impl Iterator for GoOffsetLogIter {
     type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.current = self.next;
         let r = read_next_mut::<_>(self.current, &mut self.reader).ok()?;
         self.next = r.next;
-        Some(r.entry)
-    }
-
-    fn prev(&mut self) -> Option<Self::Item> {
-        self.next = self.current;
-        let r = read_prev_mut::<_>(self.current, &mut self.reader).ok()?;
-        self.current = r.entry.offset;
         Some(r.entry)
     }
 }
@@ -196,27 +189,11 @@ pub fn read_next_mut<R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadRes
     read_next_impl::<_>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_prev<R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
-    read_prev_impl::<_>(offset, |b, o| r.read_at(b, o))
-}
-
-pub fn read_prev_mut<R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
-    read_prev_impl::<_>(offset, |b, o| r.read_at(b, o))
-}
-
 fn read_next_impl<F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
     let frame = read_next_frame::<_>(offset, &mut read_at)?;
-    read_entry::<_>(&frame, &mut read_at)
-}
-
-fn read_prev_impl<F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
-where
-    F: FnMut(&mut [u8], u64) -> io::Result<usize>,
-{
-    let frame = read_prev_frame::<_>(offset, &mut read_at)?;
     read_entry::<_>(&frame, &mut read_at)
 }
 
@@ -236,37 +213,6 @@ where
 
     let data_size = (&head_bytes[..]).read_u64::<BigEndian>()? as usize;
     Ok(Frame { offset, data_size })
-}
-
-fn read_prev_frame<F>(_offset: u64, mut _read_at: F) -> Result<Frame, Error>
-where
-    F: FnMut(&mut [u8], u64) -> io::Result<usize>,
-{
-    unimplemented!()
-    //    let tail_size = size_of_frame_tail(); // TODO: why can't this be const?
-    //
-    //    // big enough, assuming ByteType isn't bigger than a u64
-    //    let mut tmp = [0; size_of::<u32>() + size_of::<u64>()];
-    //    if tmp.len() as u64 > offset {
-    //        return Err(GoFlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
-    //    }
-    //
-    //    let n = read_at(&mut tmp[..tail_size], offset - tail_size as u64)?;
-    //    if n < tail_size {
-    //        return Err(GoFlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
-    //    }
-    //
-    //    let data_size = (&tmp[..]).read_u32::<BigEndian>()? as usize;
-    //    if (data_size as u64) > offset {
-    //        return Err(GoFlumeOffsetLogError::CorruptLogFile {}.into());
-    //    }
-    //
-    //    let data_start = offset - tail_size as u64 - data_size as u64;
-    //
-    //    Ok(Frame {
-    //        offset: data_start - size_of::<u32>() as u64,
-    //        data_size
-    //    })
 }
 
 fn read_entry<F>(frame: &Frame, read_at: &mut F) -> Result<ReadResult, Error>
@@ -304,7 +250,6 @@ mod test {
         let log = GoOffsetLog::new(d).unwrap();
         let vec = log
             .iter()
-            .forward()
             .map(|log_entry| log_entry.data)
             .map(|bytes| String::from_utf8(bytes).unwrap())
             .collect::<Vec<_>>();
@@ -318,7 +263,7 @@ mod test {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("test_vecs/empty");
         let log = GoOffsetLog::new(d).unwrap();
-        let vec = log.iter().forward().collect::<Vec<_>>();
+        let vec = log.iter().collect::<Vec<_>>();
 
         assert_eq!(vec.len(), 0);
     }
@@ -329,7 +274,6 @@ mod test {
         let log = GoOffsetLog::new(d).unwrap();
         let vec = log
             .iter_at_offset(0x0D)
-            .forward()
             .map(|log_entry| log_entry.data)
             .map(|bytes| String::from_utf8(bytes).unwrap())
             .collect::<Vec<_>>();
