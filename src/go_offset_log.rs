@@ -73,13 +73,9 @@ impl GoOffsetLog {
     /// Where path is a path to the directory that contains go log files
     pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, Error> {
         let data_file_path = Path::new(path.as_ref()).join(DATA_FILE_NAME);
+        let file = OpenOptions::new().read(true).open(&data_file_path)?;
 
-        let data_file = OpenOptions::new()
-            .read(true)
-            .create(true)
-            .open(data_file_path)?;
-
-        GoOffsetLog::from_files(data_file)
+        GoOffsetLog::from_files(file)
     }
 
     pub fn from_files(mut data_file: File) -> Result<GoOffsetLog, Error> {
@@ -212,6 +208,21 @@ mod test {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("test_vecs/one_to_ten");
         let log = GoOffsetLog::new(d).unwrap();
+        let vec = log
+            .iter()
+            .map(|log_entry| log_entry.data)
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(vec.len(), 10);
+        assert_eq!(vec[0], "\"one\"");
+        assert_eq!(vec[9], "\"ten\"");
+    }
+    #[test]
+    fn simple_open_ro() {
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("test_vecs/one_to_ten");
+        let log = GoOffsetLog::open_read_only(d).unwrap();
         let vec = log
             .iter()
             .map(|log_entry| log_entry.data)
