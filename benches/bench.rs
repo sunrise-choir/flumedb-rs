@@ -43,42 +43,46 @@ fn offset_log_decode(c: &mut Criterion) {
 fn offset_log_append(c: &mut Criterion) {
     let buf = DEFAULT_TEST_BUF;
     c.bench_function("offset log append", move |b| {
-        b.iter_batched(temp_offset_log,
-                     |mut log| {
-                         for i in 0..NUM_ENTRIES {
-                             let offset = log.append(buf).unwrap() as usize;
-                             assert_eq!(offset, i * (12 + buf.len()));
-                         }
-                     },
-                     BatchSize::SmallInput);
+        b.iter_batched(
+            temp_offset_log,
+            |mut log| {
+                for i in 0..NUM_ENTRIES {
+                    let offset = log.append(buf).unwrap() as usize;
+                    assert_eq!(offset, i * (12 + buf.len()));
+                }
+            },
+            BatchSize::SmallInput,
+        );
     });
 }
 
 fn offset_log_append_batch(c: &mut Criterion) {
-
     let test_bufs = default_test_bufs();
     c.bench_function("offset log append batch - all", move |b| {
-        b.iter_batched(temp_offset_log,
-                       |mut log| {
-                           let offsets = log.append_batch(&test_bufs).unwrap();
-                           assert_eq!(offsets.len(), NUM_ENTRIES);
-                           assert_eq!(offsets[0], 0);
-                       },
-                       BatchSize::SmallInput);
+        b.iter_batched(
+            temp_offset_log,
+            |mut log| {
+                let offsets = log.append_batch(&test_bufs).unwrap();
+                assert_eq!(offsets.len(), NUM_ENTRIES);
+                assert_eq!(offsets[0], 0);
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     let test_bufs = default_test_bufs();
     c.bench_function("offset log append batch - 100", move |b| {
-        b.iter_batched(temp_offset_log,
-                       |mut log| {
-                           for chunk in test_bufs.chunks(100) {
-                               let offsets = log.append_batch(&chunk).unwrap();
-                               assert_eq!(offsets.len(), chunk.len());
-                           }
-                       },
-                       BatchSize::SmallInput);
+        b.iter_batched(
+            temp_offset_log,
+            |mut log| {
+                for chunk in test_bufs.chunks(100) {
+                    let offsets = log.append_batch(&chunk).unwrap();
+                    assert_eq!(offsets.len(), chunk.len());
+                }
+            },
+            BatchSize::SmallInput,
+        );
     });
-
 }
 
 fn offset_log_get(c: &mut Criterion) {
@@ -96,52 +100,60 @@ fn offset_log_get(c: &mut Criterion) {
 }
 
 fn offset_log_iter(c: &mut Criterion) {
-
     // Forward
     let mut log = temp_offset_log();
     let offsets = log.append_batch(&default_test_bufs()).unwrap();
 
     c.bench_function("offset log iter forward", move |b| {
-        b.iter_batched(|| log.iter(),
-                       |mut iter| {
-                           let count = iter.forward().count();
-                           assert_eq!(count, offsets.len());
-                       },
-                       BatchSize::SmallInput)});
+        b.iter_batched(
+            || log.iter(),
+            |mut iter| {
+                let count = iter.forward().count();
+                assert_eq!(count, offsets.len());
+            },
+            BatchSize::SmallInput,
+        )
+    });
 
     // Backward
     let mut log = temp_offset_log();
     let offsets = log.append_batch(&default_test_bufs()).unwrap();
 
     c.bench_function("offset log iter backward", move |b| {
-        b.iter_batched(|| log.iter_at_offset(log.end()),
-                       |mut iter| {
-                           let count = iter.backward().count();
-                           assert_eq!(count, offsets.len());
-                       },
-                       BatchSize::SmallInput)});
+        b.iter_batched(
+            || log.iter_at_offset(log.end()),
+            |mut iter| {
+                let count = iter.backward().count();
+                assert_eq!(count, offsets.len());
+            },
+            BatchSize::SmallInput,
+        )
+    });
 
     // Forward with json decoding
     let mut log = temp_offset_log();
     log.append_batch(&default_test_bufs()).unwrap();
 
     c.bench_function("offset log iter forward and json decode", move |b| {
-        b.iter_batched(|| log.iter(),
-                       |mut iter| {
-                           let sum: u64 = iter.forward()
-                               .map(|val| from_slice(&val.data).unwrap())
-                               .map(|val: Value| match val["value"] {
-                                   Value::Number(ref num) => {
-                                       let r: u64 = num.as_u64().unwrap();
-                                       r
-                                   }
-                                   _ => panic!(),
-                               })
-                               .sum();
-                           assert_eq!(sum, NUM_ENTRIES as u64);
-                       },
-                       BatchSize::SmallInput)});
-
+        b.iter_batched(
+            || log.iter(),
+            |mut iter| {
+                let sum: u64 = iter
+                    .forward()
+                    .map(|val| from_slice(&val.data).unwrap())
+                    .map(|val: Value| match val["value"] {
+                        Value::Number(ref num) => {
+                            let r: u64 = num.as_u64().unwrap();
+                            r
+                        }
+                        _ => panic!(),
+                    })
+                    .sum();
+                assert_eq!(sum, NUM_ENTRIES as u64);
+            },
+            BatchSize::SmallInput,
+        )
+    });
 }
 
 fn mem_log_get(c: &mut Criterion) {
