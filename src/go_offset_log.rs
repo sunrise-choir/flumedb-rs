@@ -61,7 +61,6 @@ impl GoOffsetLog {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, Error> {
         let data_file_path = Path::new(path.as_ref()).join(DATA_FILE_NAME);
 
-
         let data_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -83,9 +82,7 @@ impl GoOffsetLog {
         GoOffsetLog::from_files(data_file)
     }
 
-    pub fn from_files(
-        mut data_file: File,
-    ) -> Result<GoOffsetLog, Error> {
+    pub fn from_files(mut data_file: File) -> Result<GoOffsetLog, Error> {
         let file_length = data_file.seek(SeekFrom::End(0))?;
 
         Ok(GoOffsetLog {
