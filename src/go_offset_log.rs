@@ -246,4 +246,19 @@ mod test {
         assert_eq!(vec[0], "\"two\"");
         assert_eq!(vec[8], "\"ten\"");
     }
+
+    #[test]
+    fn ssb_messages() {
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push("test_vecs/four_ssb_messages");
+        let log = GoOffsetLog::new(d).unwrap();
+        let vec = log.iter()
+            .map(|log_entry| log_entry.data)
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(vec.len(), 4);
+        assert_eq!(vec[0], "\"two\"");
+        // assert_eq!(vec[1], "\"ten\"");
+    }
 }
