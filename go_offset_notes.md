@@ -56,8 +56,10 @@ func TestDecode(t *testing.T) {
 	r.True(ok)
 	t.Log(msg)
 
-	r.Equal("@/FbSrtnBak/DSh+vna9V9buP4WPVIl77jpYe/qjB31I=.ed25519", msg.Author.Ref())
-	r.Equal("%u24WDgFLSmRcfbkcoRZ/pOtUkOPuRVEFO7UgIxRLlq0=.sha256", msg.Key.Ref())
+    // Author and Key are not stored a a string in msgpack but a struct with the fields Algo and ID and Algo and Hash (for key)
+    r.Equal("@/FbSrtnBak/DSh+vna9V9buP4WPVIl77jpYe/qjB31I=.ed25519", msg.Author.Ref())
+    r.Equal("%u24WDgFLSmRcfbkcoRZ/pOtUkOPuRVEFO7UgIxRLlq0=.sha256", msg.Key.Ref())
+    // Raw should be an opaque byte array
 	rawMessage := `{
   "previous": null,
   "author": "@/FbSrtnBak/DSh+vna9V9buP4WPVIl77jpYe/qjB31I=.ed25519",
