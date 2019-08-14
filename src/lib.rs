@@ -15,6 +15,7 @@ extern crate serde_json;
 
 pub mod flume_log;
 pub mod flume_view;
+pub mod go_offset_log;
 pub mod mem_log;
 pub mod offset_log;
 
