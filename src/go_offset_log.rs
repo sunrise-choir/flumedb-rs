@@ -10,8 +10,6 @@ use std::mem::size_of;
 use std::path::Path;
 
 const DATA_FILE_NAME: &str = "data";
-const JOURNAL_FILE_NAME: &str = "jrnl";
-const OFFSET_FILE_NAME: &str = "ofst";
 
 #[derive(Debug, Fail)]
 pub enum GoFlumeOffsetLogError {
@@ -30,8 +28,6 @@ pub enum GoFlumeOffsetLogError {
 
 pub struct GoOffsetLog {
     pub data_file: File,
-    pub offset_file: File,
-    pub journal_file: File,
     end_of_file: u64,
 }
 
@@ -63,21 +59,8 @@ pub struct ReadResult {
 impl GoOffsetLog {
     /// Where path is a path to the directory that contains go log files
     pub fn new<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, Error> {
-        let offset_file_path = Path::new(path.as_ref()).join(OFFSET_FILE_NAME);
-        let journal_file_path = Path::new(path.as_ref()).join(JOURNAL_FILE_NAME);
         let data_file_path = Path::new(path.as_ref()).join(DATA_FILE_NAME);
 
-        let offset_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(offset_file_path)?;
-
-        let journal_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(journal_file_path)?;
 
         let data_file = OpenOptions::new()
             .read(true)
@@ -85,44 +68,28 @@ impl GoOffsetLog {
             .create(true)
             .open(data_file_path)?;
 
-        GoOffsetLog::from_files(data_file, offset_file, journal_file)
+        GoOffsetLog::from_files(data_file)
     }
 
     /// Where path is a path to the directory that contains go log files
     pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, Error> {
-        let offset_file_path = Path::new(path.as_ref()).join(OFFSET_FILE_NAME);
-        let journal_file_path = Path::new(path.as_ref()).join(JOURNAL_FILE_NAME);
         let data_file_path = Path::new(path.as_ref()).join(DATA_FILE_NAME);
-
-        let offset_file = OpenOptions::new()
-            .read(true)
-            .create(true)
-            .open(offset_file_path)?;
-
-        let journal_file = OpenOptions::new()
-            .read(true)
-            .create(true)
-            .open(journal_file_path)?;
 
         let data_file = OpenOptions::new()
             .read(true)
             .create(true)
             .open(data_file_path)?;
 
-        GoOffsetLog::from_files(data_file, offset_file, journal_file)
+        GoOffsetLog::from_files(data_file)
     }
 
     pub fn from_files(
         mut data_file: File,
-        offset_file: File,
-        journal_file: File,
     ) -> Result<GoOffsetLog, Error> {
         let file_length = data_file.seek(SeekFrom::End(0))?;
 
         Ok(GoOffsetLog {
             data_file,
-            offset_file,
-            journal_file,
             end_of_file: file_length,
         })
     }
