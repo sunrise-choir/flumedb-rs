@@ -10,8 +10,12 @@ extern crate bytes;
 extern crate failure;
 extern crate log;
 extern crate serde;
+#[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate ssb_multiformats;
+
+extern crate rmp_serde;
 
 pub mod flume_log;
 pub mod flume_view;

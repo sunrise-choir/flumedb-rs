@@ -3,6 +3,9 @@ pub use bidir_iter::BidirIterator;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut};
 use byteorder::{BigEndian, ReadBytesExt};
 use flume_log::*;
+use rmp_serde::decode;
+use serde_json::{json, Value};
+use ssb_multiformats::multihash::{Multihash, Target};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Seek, SeekFrom};
@@ -24,6 +27,34 @@ pub enum GoFlumeOffsetLogError {
 
     #[fail(display = "The decode buffer passed to decode was too small")]
     DecodeBufferSizeTooSmall {},
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GoMsgPackKey {
+    #[serde(rename = "Algo")]
+    algo: String,
+    #[serde(rename = "Hash")]
+    #[serde(with = "serde_bytes")]
+    hash: Vec<u8>,
+}
+
+impl GoMsgPackKey {
+    pub fn to_legacy_string(&self) -> String {
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&self.hash[..32]);
+        let multi_hash = Multihash::from_sha256(arr, Target::Message);
+        multi_hash.to_legacy_string()
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GoMsgPackData {
+    #[serde(rename = "Raw")]
+    raw: String,
+    #[serde(rename = "Key")]
+    key: GoMsgPackKey,
+    #[serde(rename = "Sequence")]
+    sequence: u64,
 }
 
 pub struct GoOffsetLog {
@@ -189,10 +220,25 @@ where
         return Err(GoFlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
+    // The go log stores data in msg pack.
+    // There is a "Raw" field that has the json used for
+    // signing.
+    // But we also need to get the key that is encoded in msg pack and build a traditional json ssb
+    // message that has "key" "value" and "timestamp".
+    let msg_packed: GoMsgPackData = decode::from_slice(&mut buf.as_slice())?;
+
+    let ssb_message = json!({
+        "key": msg_packed.key.to_legacy_string(),
+        "value": serde_json::from_str::<Value>(&msg_packed.raw)?,
+        "timestamp": 0
+    });
+
+    let data = ssb_message.to_string().into_bytes();
+
     Ok(ReadResult {
         entry: LogEntry {
             offset: frame.offset,
-            data: buf,
+            data,
         },
         next: frame.data_size as u64 + size_of::<u64>() as u64 + frame.offset,
     })
@@ -200,38 +246,31 @@ where
 
 #[cfg(test)]
 mod test {
+    extern crate rmp_serde;
+    extern crate rmpv;
+    extern crate serde_json;
+
     use go_offset_log::*;
+    use serde_json::Value;
     use std::path::PathBuf;
 
     #[test]
-    fn simple_open() {
+    fn open_ro() {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        d.push("test_vecs/one_to_ten");
-        let log = GoOffsetLog::new(d).unwrap();
-        let vec = log
-            .iter()
-            .map(|log_entry| log_entry.data)
-            .map(|bytes| String::from_utf8(bytes).unwrap())
-            .collect::<Vec<_>>();
-
-        assert_eq!(vec.len(), 10);
-        assert_eq!(vec[0], "\"one\"");
-        assert_eq!(vec[9], "\"ten\"");
-    }
-    #[test]
-    fn simple_open_ro() {
-        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        d.push("test_vecs/one_to_ten");
+        d.push("test_vecs/four_ssb_messages");
         let log = GoOffsetLog::open_read_only(d).unwrap();
         let vec = log
             .iter()
             .map(|log_entry| log_entry.data)
-            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .map(|data| serde_json::from_slice::<Value>(&data).unwrap())
             .collect::<Vec<_>>();
 
-        assert_eq!(vec.len(), 10);
-        assert_eq!(vec[0], "\"one\"");
-        assert_eq!(vec[9], "\"ten\"");
+        assert_eq!(vec.len(), 4);
+        assert_eq!(vec[0]["value"]["previous"], Value::Null);
+        assert_eq!(
+            vec[3]["value"]["content"]["text"],
+            "this feels like it will go very rusty"
+        );
     }
     #[test]
     fn open_empty() {
@@ -245,17 +284,19 @@ mod test {
     #[test]
     fn iter_at_offset() {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        d.push("test_vecs/one_to_ten");
+        d.push("test_vecs/four_ssb_messages");
         let log = GoOffsetLog::new(d).unwrap();
         let vec = log
-            .iter_at_offset(0x0D)
+            .iter_at_offset(0x247)
             .map(|log_entry| log_entry.data)
-            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .map(|data| serde_json::from_slice::<Value>(&data).unwrap())
             .collect::<Vec<_>>();
 
-        assert_eq!(vec.len(), 9);
-        assert_eq!(vec[0], "\"two\"");
-        assert_eq!(vec[8], "\"ten\"");
+        assert_eq!(vec.len(), 3);
+        assert_eq!(
+            vec[2]["value"]["content"]["text"],
+            "this feels like it will go very rusty"
+        );
     }
 
     #[test]
@@ -263,13 +304,17 @@ mod test {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("test_vecs/four_ssb_messages");
         let log = GoOffsetLog::new(d).unwrap();
-        let vec = log.iter()
+        let vec = log
+            .iter()
             .map(|log_entry| log_entry.data)
-            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .map(|data| serde_json::from_slice::<Value>(&data).unwrap())
             .collect::<Vec<_>>();
 
         assert_eq!(vec.len(), 4);
-        assert_eq!(vec[0], "\"two\"");
-        // assert_eq!(vec[1], "\"ten\"");
+        assert_eq!(vec[0]["value"]["previous"], Value::Null);
+        assert_eq!(
+            vec[3]["value"]["content"]["text"],
+            "this feels like it will go very rusty"
+        );
     }
 }
