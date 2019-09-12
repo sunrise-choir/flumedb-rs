@@ -1,5 +1,7 @@
 pub use bidir_iter::BidirIterator;
 
+use iter_at_offset::IterAtOffset;
+use log_entry::LogEntry;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut};
 use byteorder::{BigEndian, ReadBytesExt};
 use flume_log::*;
@@ -76,12 +78,6 @@ impl Frame {
 }
 
 #[derive(Debug)]
-pub struct LogEntry {
-    pub offset: u64,
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug)]
 pub struct ReadResult {
     pub entry: LogEntry,
     pub next: u64,
@@ -136,7 +132,10 @@ impl GoOffsetLog {
         GoOffsetLogIter::new(self.data_file.try_clone().unwrap())
     }
 
-    pub fn iter_at_offset(&self, offset: u64) -> GoOffsetLogIter {
+}
+
+impl IterAtOffset<GoOffsetLogIter> for GoOffsetLog {
+    fn iter_at_offset(&self, offset: u64) -> GoOffsetLogIter {
         GoOffsetLogIter::with_starting_offset(self.data_file.try_clone().unwrap(), offset)
     }
 }

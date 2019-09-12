@@ -22,6 +22,8 @@ pub mod flume_view;
 pub mod go_offset_log;
 pub mod mem_log;
 pub mod offset_log;
+pub mod iter_at_offset;
+pub mod log_entry;
 
 pub use flume_log::*;
 pub use flume_view::*;

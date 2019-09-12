@@ -1,9 +1,11 @@
 pub use bidir_iter::BidirIterator;
 
+use iter_at_offset::IterAtOffset;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetWrite};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
+use log_entry::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Seek, SeekFrom};
@@ -39,12 +41,6 @@ impl Frame {
     fn data_start(&self) -> u64 {
         self.offset + size_of::<u32>() as u64
     }
-}
-
-#[derive(Debug)] // TODO: derive more traits
-pub struct LogEntry {
-    pub offset: u64,
-    pub data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -174,6 +170,23 @@ impl<ByteType> OffsetLogIter<ByteType> {
             next: offset,
             byte_type: PhantomData,
         }
+    }
+}
+
+impl<ByteType> IterAtOffset<OffsetLogIter<ByteType>> for OffsetLog<ByteType> {
+    fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType>{
+        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset)
+    }
+}
+
+impl<ByteType> Iterator for OffsetLogIter<ByteType> {
+    type Item = LogEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.current = self.next;
+        let r = read_next_mut::<u32, _>(self.current, &mut self.reader).ok()?;
+        self.next = r.next;
+        Some(r.entry)
     }
 }
 
@@ -678,25 +691,28 @@ mod test {
         log.append(b"456")?;
 
         let mut iter = log.iter();
-        assert_eq!(iter.next().unwrap().data, b"abc");
-        assert_eq!(iter.next().unwrap().data, b"def");
-        assert_eq!(iter.next().unwrap().data, b"123");
-        assert_eq!(iter.next().unwrap().data, b"456");
-        assert!(iter.next().is_none());
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"def");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"123");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"456");
+        assert!(BidirIterator::next(&mut iter).is_none());
         assert_eq!(iter.prev().unwrap().data, b"456");
         assert_eq!(iter.prev().unwrap().data, b"123");
         assert_eq!(iter.prev().unwrap().data, b"def");
         assert_eq!(iter.prev().unwrap().data, b"abc");
         assert!(iter.prev().is_none());
-        assert_eq!(iter.next().unwrap().data, b"abc");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
 
-        let mut iter = log.iter().filter(|e| e.offset % 10 == 0).map(|e| e.data);
-        assert_eq!(iter.next().unwrap(), b"abc");
-        assert_eq!(iter.next().unwrap(), b"123");
-        assert!(iter.next().is_none());
-        assert_eq!(iter.prev().unwrap(), b"123");
+        let iter = log.iter();
+        let mut iter = BidirIterator::filter(iter, |e| e.offset % 10 == 0);
 
-        let mut iter = log.iter().map(|e| e.offset);
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"123");
+        assert!(BidirIterator::next(&mut iter).is_none());
+        assert_eq!(iter.prev().unwrap().data, b"123");
+
+        let iter = log.iter();
+        let mut iter = BidirIterator::map(iter, |e| e.offset);
 
         // Same iter forward and back
         let forward_offsets: Vec<u64> = iter.forward().collect();
