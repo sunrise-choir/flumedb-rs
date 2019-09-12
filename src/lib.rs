@@ -20,12 +20,13 @@ extern crate rmp_serde;
 pub mod flume_log;
 pub mod flume_view;
 pub mod go_offset_log;
-pub mod mem_log;
-pub mod offset_log;
 pub mod iter_at_offset;
 pub mod log_entry;
+pub mod mem_log;
+pub mod offset_log;
 
 pub use flume_log::*;
 pub use flume_view::*;
+pub use iter_at_offset::*;
 pub use mem_log::*;
 pub use offset_log::*;

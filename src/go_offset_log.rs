@@ -1,10 +1,10 @@
 pub use bidir_iter::BidirIterator;
 
-use iter_at_offset::IterAtOffset;
-use log_entry::LogEntry;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut};
 use byteorder::{BigEndian, ReadBytesExt};
 use flume_log::*;
+use iter_at_offset::IterAtOffset;
+use log_entry::LogEntry;
 use rmp_serde::decode;
 use serde_json::{json, Value};
 use ssb_multiformats::multihash::{Multihash, Target};
@@ -131,13 +131,6 @@ impl GoOffsetLog {
         //  I'd rather not return a Result<> here.
         GoOffsetLogIter::new(self.data_file.try_clone().unwrap())
     }
-
-}
-
-impl IterAtOffset<GoOffsetLogIter> for GoOffsetLog {
-    fn iter_at_offset(&self, offset: u64) -> GoOffsetLogIter {
-        GoOffsetLogIter::with_starting_offset(self.data_file.try_clone().unwrap(), offset)
-    }
 }
 
 pub struct GoOffsetLogIter {
@@ -171,6 +164,11 @@ impl Iterator for GoOffsetLogIter {
     }
 }
 
+impl IterAtOffset<GoOffsetLogIter> for GoOffsetLog {
+    fn iter_at_offset(&self, offset: u64) -> GoOffsetLogIter {
+        GoOffsetLogIter::with_starting_offset(self.data_file.try_clone().unwrap(), offset)
+    }
+}
 pub fn read_next<R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
     read_next_impl::<_>(offset, |b, o| r.read_at(b, o))
 }

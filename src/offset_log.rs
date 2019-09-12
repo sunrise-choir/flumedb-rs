@@ -1,10 +1,10 @@
 pub use bidir_iter::BidirIterator;
 
-use iter_at_offset::IterAtOffset;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetWrite};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
+use iter_at_offset::IterAtOffset;
 use log_entry::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -174,7 +174,7 @@ impl<ByteType> OffsetLogIter<ByteType> {
 }
 
 impl<ByteType> IterAtOffset<OffsetLogIter<ByteType>> for OffsetLog<ByteType> {
-    fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType>{
+    fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
         OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset)
     }
 }

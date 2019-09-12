@@ -3,4 +3,3 @@ pub struct LogEntry {
     pub offset: u64,
     pub data: Vec<u8>,
 }
-
