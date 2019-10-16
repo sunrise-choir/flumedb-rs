@@ -13,9 +13,9 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate serde_cbor;
 extern crate ssb_multiformats;
 
-extern crate rmp_serde;
 
 pub mod flume_log;
 pub mod flume_view;

@@ -13,10 +13,9 @@ serde = "1.0.80"
 serde_derive = "1.0.80"
 serde_json = "1.0.33"
 serde_bytes = "0.11.2"
+serde_cbor = "0.10.2"
 buffered_offset_reader = "0.6"
 bidir_iter = "0.2"
-rmp-serde = "0.13.7"
-rmpv = "0.4.0"
 ssb-multiformats = { git = "https://github.com/sunrise-choir/ssb-multiformats" }
 
 
