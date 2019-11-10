@@ -183,6 +183,17 @@ impl<ByteType> OffsetLogIter<ByteType> {
     }
 }
 
+impl<ByteType> std::iter::Iterator for OffsetLogIter<ByteType> {
+    type Item = LogEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.current = self.next;
+        let r = read_next_mut::<u32, _>(self.current, &mut self.reader).ok()?;
+        self.next = r.next;
+        Some(r.entry)
+    }
+
+}
 impl<ByteType> BidirIterator for OffsetLogIter<ByteType> {
     type Item = LogEntry;
 
@@ -200,6 +211,7 @@ impl<ByteType> BidirIterator for OffsetLogIter<ByteType> {
         Some(r.entry)
     }
 }
+
 
 
 fn size_of_frame_tail<T>() -> usize {
