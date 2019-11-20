@@ -208,6 +208,11 @@ impl<ByteType> BidirIterator for OffsetLogIter<ByteType> {
     }
 }
 
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> f107364d6a70767ae7dc114cfd47c76b86b282cb
 fn size_of_frame_tail<T>() -> usize {
     size_of::<u32>() + size_of::<T>()
 }
