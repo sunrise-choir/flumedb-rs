@@ -93,7 +93,7 @@ impl<ByteType> OffsetLog<ByteType> {
         read_next::<ByteType, _>(offset, &self.file)
     }
 
-    pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
+    pub fn append_batch<T: AsRef<[u8]>>(&mut self, buffs: &[T]) -> Result<Vec<u64>, Error> {
         let mut bytes = BytesMut::new();
         let mut offsets = Vec::<u64>::new();
 
@@ -101,7 +101,7 @@ impl<ByteType> OffsetLog<ByteType> {
             //Maybe there's a more functional way of doing this. Kinda mixing functional and
             //imperative.
             offsets.push(offset);
-            encode::<ByteType>(offset, &buff, &mut bytes)
+            encode::<ByteType>(offset, &buff.as_ref(), &mut bytes)
         })?;
 
         offsets.last().map(|o| self.last_offset = Some(*o));
