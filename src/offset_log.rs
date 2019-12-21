@@ -4,6 +4,8 @@ use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetW
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
 use flume_log::*;
+use iter_at_offset::IterAtOffset;
+use log_entry::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Seek, SeekFrom};
@@ -32,7 +34,7 @@ pub struct OffsetLog<ByteType> {
 #[derive(Debug)]
 pub struct Frame {
     pub offset: u64,
-    pub data_size: usize
+    pub data_size: usize,
 }
 
 impl Frame {
@@ -41,21 +43,13 @@ impl Frame {
     }
 }
 
-#[derive(Debug)] // TODO: derive more traits
-pub struct LogEntry {
-    pub offset: u64,
-    pub data: Vec<u8>,
-}
-
 #[derive(Debug)]
 pub struct ReadResult {
     pub entry: LogEntry,
     pub next: u64,
 }
 
-
 impl<ByteType> OffsetLog<ByteType> {
-
     pub fn new<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, Error> {
         let file = OpenOptions::new()
             .read(true)
@@ -67,9 +61,7 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, Error> {
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&path)?;
+        let file = OpenOptions::new().read(true).open(&path)?;
 
         OffsetLog::from_file(file)
     }
@@ -101,7 +93,7 @@ impl<ByteType> OffsetLog<ByteType> {
         read_next::<ByteType, _>(offset, &self.file)
     }
 
-    pub fn append_batch(&mut self, buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
+    pub fn append_batch<T: AsRef<[u8]>>(&mut self, buffs: &[T]) -> Result<Vec<u64>, Error> {
         let mut bytes = BytesMut::new();
         let mut offsets = Vec::<u64>::new();
 
@@ -109,7 +101,7 @@ impl<ByteType> OffsetLog<ByteType> {
             //Maybe there's a more functional way of doing this. Kinda mixing functional and
             //imperative.
             offsets.push(offset);
-            encode::<ByteType>(offset, &buff, &mut bytes)
+            encode::<ByteType>(offset, &buff.as_ref(), &mut bytes)
         })?;
 
         offsets.last().map(|o| self.last_offset = Some(*o));
@@ -127,10 +119,8 @@ impl<ByteType> OffsetLog<ByteType> {
     }
 
     pub fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
-        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(),
-                                            offset)
+        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset)
     }
-
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
@@ -183,7 +173,13 @@ impl<ByteType> OffsetLogIter<ByteType> {
     }
 }
 
-impl<ByteType> std::iter::Iterator for OffsetLogIter<ByteType> {
+impl<ByteType> IterAtOffset<OffsetLogIter<ByteType>> for OffsetLog<ByteType> {
+    fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
+        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset)
+    }
+}
+
+impl<ByteType> Iterator for OffsetLogIter<ByteType> {
     type Item = LogEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -192,8 +188,8 @@ impl<ByteType> std::iter::Iterator for OffsetLogIter<ByteType> {
         self.next = r.next;
         Some(r.entry)
     }
-
 }
+
 impl<ByteType> BidirIterator for OffsetLogIter<ByteType> {
     type Item = LogEntry;
 
@@ -211,8 +207,6 @@ impl<ByteType> BidirIterator for OffsetLogIter<ByteType> {
         Some(r.entry)
     }
 }
-
-
 
 fn size_of_frame_tail<T>() -> usize {
     size_of::<u32>() + size_of::<T>()
@@ -243,7 +237,8 @@ pub fn validate_entry<T>(offset: u64, data_size: usize, rest: &[u8]) -> Result<u
         return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
     }
 
-    let next = (&rest[(data_size + size_of::<u32>())..]).read_uint::<BigEndian>(size_of::<T>())? as u64;
+    let next =
+        (&rest[(data_size + size_of::<u32>())..]).read_uint::<BigEndian>(size_of::<T>())? as u64;
 
     // `next` should be equal to the offset of the next entry
     // which may or may not be immediately following this one (I suppose)
@@ -257,7 +252,10 @@ pub fn read_next<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResu
     read_next_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_next_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+pub fn read_next_mut<ByteType, R: OffsetReadMut>(
+    offset: u64,
+    r: &mut R,
+) -> Result<ReadResult, Error> {
     read_next_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
@@ -265,7 +263,10 @@ pub fn read_prev<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResu
     read_prev_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_prev_mut<ByteType, R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+pub fn read_prev_mut<ByteType, R: OffsetReadMut>(
+    offset: u64,
+    r: &mut R,
+) -> Result<ReadResult, Error> {
     read_prev_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
@@ -300,10 +301,7 @@ where
     }
 
     let data_size = (&head_bytes[..]).read_u32::<BigEndian>()? as usize;
-    Ok(Frame {
-        offset,
-        data_size
-    })
+    Ok(Frame { offset, data_size })
 }
 
 fn read_prev_frame<ByteType, F>(offset: u64, mut read_at: F) -> Result<Frame, Error>
@@ -332,7 +330,7 @@ where
 
     Ok(Frame {
         offset: data_start - size_of::<u32>() as u64,
-        data_size
+        data_size,
     })
 }
 
@@ -373,7 +371,7 @@ mod test {
     use flume_log::FlumeLog;
     use offset_log::*;
 
-    use serde_json::{Value, from_slice};
+    use serde_json::{from_slice, Value};
 
     extern crate tempfile;
     use self::tempfile::tempfile;
@@ -484,7 +482,6 @@ mod test {
         let r4 = read_prev::<u32, _>(r3.entry.offset, &bytes).unwrap();
         assert_eq!(r4.entry.offset, 0);
         assert_eq!(&r4.entry.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
-
     }
 
     #[test]
@@ -574,13 +571,11 @@ mod test {
             .unwrap();
         assert_eq!(result, 0);
 
-        assert!(log.append(&[1,2,3,4]).is_err());
+        assert!(log.append(&[1, 2, 3, 4]).is_err());
     }
-
 
     #[test]
     fn write_to_a_file() -> Result<(), Error> {
-
         let test_vec = b"{\"value\": 1}";
 
         let mut log = temp_offset_log();
@@ -594,9 +589,7 @@ mod test {
 
         let v: Value = from_slice(&log.get(0)?)?;
         let result = match v["value"] {
-            Value::Number(ref num) => {
-                num.as_u64().unwrap()
-            }
+            Value::Number(ref num) => num.as_u64().unwrap(),
             _ => panic!(),
         };
         assert_eq!(result, 1);
@@ -671,7 +664,8 @@ mod test {
     fn offset_log_as_iter() {
         let log = OffsetLog::<u32>::new("./db/test.offset").unwrap();
 
-        let sum: u64 = log.iter()
+        let sum: u64 = log
+            .iter()
             .forward()
             .take(5)
             .map(|val| val.data)
@@ -690,7 +684,6 @@ mod test {
 
     #[test]
     fn bidir_iter() -> Result<(), Error> {
-
         let mut log = temp_offset_log();
         log.append(b"abc")?;
         log.append(b"def")?;
@@ -698,29 +691,28 @@ mod test {
         log.append(b"456")?;
 
         let mut iter = log.iter();
-        assert_eq!(iter.next().unwrap().data, b"abc");
-        assert_eq!(iter.next().unwrap().data, b"def");
-        assert_eq!(iter.next().unwrap().data, b"123");
-        assert_eq!(iter.next().unwrap().data, b"456");
-        assert!(iter.next().is_none());
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"def");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"123");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"456");
+        assert!(BidirIterator::next(&mut iter).is_none());
         assert_eq!(iter.prev().unwrap().data, b"456");
         assert_eq!(iter.prev().unwrap().data, b"123");
         assert_eq!(iter.prev().unwrap().data, b"def");
         assert_eq!(iter.prev().unwrap().data, b"abc");
         assert!(iter.prev().is_none());
-        assert_eq!(iter.next().unwrap().data, b"abc");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
 
+        let iter = log.iter();
+        let mut iter = BidirIterator::filter(iter, |e| e.offset % 10 == 0);
 
-        let mut iter = log
-            .iter()
-            .filter(|e| e.offset % 10 == 0)
-            .map(|e| e.data);
-        assert_eq!(iter.next().unwrap(), b"abc");
-        assert_eq!(iter.next().unwrap(), b"123");
-        assert!(iter.next().is_none());
-        assert_eq!(iter.prev().unwrap(), b"123");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
+        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"123");
+        assert!(BidirIterator::next(&mut iter).is_none());
+        assert_eq!(iter.prev().unwrap().data, b"123");
 
-        let mut iter = log.iter().map(|e| e.offset);
+        let iter = log.iter();
+        let mut iter = BidirIterator::map(iter, |e| e.offset);
 
         // Same iter forward and back
         let forward_offsets: Vec<u64> = iter.forward().collect();
@@ -745,9 +737,6 @@ mod test {
             .collect();
         assert_eq!(backward_offsets, &[45, 30, 15, 0]);
 
-
         Ok(())
     }
-
-
 }
