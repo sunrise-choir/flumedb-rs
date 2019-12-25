@@ -1,4 +1,4 @@
-use flume_log::*;
+use crate::flume_log::*;
 
 use std::iter::IntoIterator;
 
@@ -52,8 +52,8 @@ impl<'a> IntoIterator for &'a MemLog {
 
 #[cfg(test)]
 mod tests {
-    use flume_log::*;
-    use mem_log::MemLog;
+    use crate::flume_log::*;
+    use crate::mem_log::MemLog;
     #[test]
     fn get() {
         let mut log = MemLog::new();

@@ -1,11 +1,11 @@
 pub use bidir_iter::{BidirIterator, Forward};
 
+use crate::flume_log::*;
+use crate::iter_at_offset::IterAtOffset;
+use crate::log_entry::LogEntry;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetWrite};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{BufMut, BytesMut};
-use flume_log::*;
-use iter_at_offset::IterAtOffset;
-use log_entry::LogEntry;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Seek, SeekFrom};
@@ -360,9 +360,9 @@ where
 // extern crate tempfile;
 #[cfg(test)]
 mod test {
+    use crate::flume_log::FlumeLog;
+    use crate::offset_log::*;
     use bytes::BytesMut;
-    use flume_log::FlumeLog;
-    use offset_log::*;
 
     use serde_json::{from_slice, Value};
 

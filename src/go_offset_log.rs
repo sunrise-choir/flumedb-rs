@@ -1,13 +1,13 @@
 pub use bidir_iter::BidirIterator;
 
+use crate::flume_log::*;
+use crate::iter_at_offset::IterAtOffset;
+use crate::log_entry::LogEntry;
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut};
 use byteorder::{BigEndian, ReadBytesExt};
-use flume_log::*;
-use iter_at_offset::IterAtOffset;
-use log_entry::LogEntry;
-use serde_json::{json, Value};
 use serde_cbor::from_slice;
 use serde_cbor::Value as CborValue;
+use serde_json::{json, Value};
 use ssb_multiformats::multihash::{Multihash, Target};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -40,7 +40,7 @@ struct GoMsgPackKey<'a> {
     algo: &'a str,
     #[serde(rename = "Hash")]
     #[serde(with = "serde_bytes")]
-    hash: &'a[u8],
+    hash: &'a [u8],
 }
 
 impl<'a> GoMsgPackKey<'a> {
@@ -62,8 +62,8 @@ struct GoMsgPackData<'a> {
     sequence: u64,
 }
 
-type GoCborKey<'a> = (&'a[u8], &'a str);
-type GoCborTuple<'a> = (GoCborKey<'a>, CborValue, GoCborKey<'a>, i128, f64, &'a[u8]);
+type GoCborKey<'a> = (&'a [u8], &'a str);
+type GoCborTuple<'a> = (GoCborKey<'a>, CborValue, GoCborKey<'a>, i128, f64, &'a [u8]);
 
 pub struct GoOffsetLog {
     pub data_file: File,
@@ -214,7 +214,7 @@ where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
     // Entry is [payload size: u64, payload ]
-    
+
     let mut buf = Vec::with_capacity(frame.data_size);
     unsafe { buf.set_len(frame.data_size) };
 
@@ -224,22 +224,19 @@ where
     }
 
     if buf[0] != 1 {
-        return Err(GoFlumeOffsetLogError::UnsupportedMessageType{}.into());
+        return Err(GoFlumeOffsetLogError::UnsupportedMessageType {}.into());
     }
 
     let tuple: GoCborTuple = from_slice(&buf[1..])?;
 
     let (_, _, (hash, algo), seq, timestamp, raw) = tuple;
 
-    let key = GoMsgPackKey{
-        algo,
-        hash,
-    };
+    let key = GoMsgPackKey { algo, hash };
 
-    let cbor = GoMsgPackData{
+    let cbor = GoMsgPackData {
         raw: std::str::from_utf8(raw)?,
         key,
-        sequence: seq as u64
+        sequence: seq as u64,
     };
     // The go log stores data in msg pack.
     // There is a "Raw" field that has the json used for
@@ -269,7 +266,7 @@ where
 mod test {
     extern crate serde_json;
 
-    use go_offset_log::*;
+    use crate::go_offset_log::*;
     use serde_json::Value;
     use std::path::PathBuf;
 
@@ -286,10 +283,7 @@ mod test {
 
         assert_eq!(vec.len(), 2);
         assert_eq!(vec[0]["value"]["previous"], Value::Null);
-        assert_eq!(
-            vec[1]["value"]["content"]["hello"],
-            "piet!!!"
-        );
+        assert_eq!(vec[1]["value"]["content"]["hello"], "piet!!!");
     }
     #[test]
     fn open_empty() {
@@ -314,9 +308,6 @@ mod test {
 
         assert_eq!(vec.len(), 2);
         assert_eq!(vec[0]["value"]["previous"], Value::Null);
-        assert_eq!(
-            vec[1]["value"]["content"]["hello"],
-            "piet!!!"
-        );
+        assert_eq!(vec[1]["value"]["content"]["hello"], "piet!!!");
     }
 }
