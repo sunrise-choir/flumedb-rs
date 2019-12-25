@@ -1,4 +1,4 @@
-pub use bidir_iter::BidirIterator;
+pub use bidir_iter::{BidirIterator, Forward};
 
 use buffered_offset_reader::{BufOffsetReader, OffsetRead, OffsetReadMut, OffsetWrite};
 use byteorder::{BigEndian, ReadBytesExt};
@@ -112,13 +112,17 @@ impl<ByteType> OffsetLog<ByteType> {
         Ok(offsets)
     }
 
-    pub fn iter(&self) -> OffsetLogIter<ByteType> {
+    pub fn iter(&self) -> Forward<OffsetLogIter<ByteType>> {
+        OffsetLogIter::new(self.file.try_clone().unwrap()).forward_owned()
+    }
+
+    pub fn bidir_iter(&self) -> OffsetLogIter<ByteType> {
         // TODO: what are the chances that try_clone() will fail?
         //  I'd rather not return a Result<> here.
         OffsetLogIter::new(self.file.try_clone().unwrap())
     }
 
-    pub fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
+    pub fn bidir_iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
         OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset)
     }
 }
@@ -173,20 +177,9 @@ impl<ByteType> OffsetLogIter<ByteType> {
     }
 }
 
-impl<ByteType> IterAtOffset<OffsetLogIter<ByteType>> for OffsetLog<ByteType> {
-    fn iter_at_offset(&self, offset: u64) -> OffsetLogIter<ByteType> {
-        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset)
-    }
-}
-
-impl<ByteType> Iterator for OffsetLogIter<ByteType> {
-    type Item = LogEntry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.current = self.next;
-        let r = read_next_mut::<u32, _>(self.current, &mut self.reader).ok()?;
-        self.next = r.next;
-        Some(r.entry)
+impl<ByteType> IterAtOffset<Forward<OffsetLogIter<ByteType>>> for OffsetLog<ByteType> {
+    fn iter_at_offset(&self, offset: u64) -> Forward<OffsetLogIter<ByteType>> {
+        OffsetLogIter::with_starting_offset(self.file.try_clone().unwrap(), offset).forward_owned()
     }
 }
 
@@ -666,7 +659,6 @@ mod test {
 
         let sum: u64 = log
             .iter()
-            .forward()
             .take(5)
             .map(|val| val.data)
             .map(|val| from_slice(&val).unwrap())
@@ -690,29 +682,29 @@ mod test {
         log.append(b"123")?;
         log.append(b"456")?;
 
-        let mut iter = log.iter();
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"def");
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"123");
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"456");
-        assert!(BidirIterator::next(&mut iter).is_none());
+        let mut iter = log.bidir_iter();
+        assert_eq!(iter.next().unwrap().data, b"abc");
+        assert_eq!(iter.next().unwrap().data, b"def");
+        assert_eq!(iter.next().unwrap().data, b"123");
+        assert_eq!(iter.next().unwrap().data, b"456");
+        assert!(iter.next().is_none());
         assert_eq!(iter.prev().unwrap().data, b"456");
         assert_eq!(iter.prev().unwrap().data, b"123");
         assert_eq!(iter.prev().unwrap().data, b"def");
         assert_eq!(iter.prev().unwrap().data, b"abc");
         assert!(iter.prev().is_none());
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
+        assert_eq!(iter.next().unwrap().data, b"abc");
 
-        let iter = log.iter();
-        let mut iter = BidirIterator::filter(iter, |e| e.offset % 10 == 0);
+        let iter = log.bidir_iter();
+        let mut iter = iter.filter(|e| e.offset % 10 == 0);
 
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"abc");
-        assert_eq!(BidirIterator::next(&mut iter).unwrap().data, b"123");
-        assert!(BidirIterator::next(&mut iter).is_none());
+        assert_eq!(iter.next().unwrap().data, b"abc");
+        assert_eq!(iter.next().unwrap().data, b"123");
+        assert!(iter.next().is_none());
         assert_eq!(iter.prev().unwrap().data, b"123");
 
-        let iter = log.iter();
-        let mut iter = BidirIterator::map(iter, |e| e.offset);
+        let iter = log.bidir_iter();
+        let mut iter = iter.map(|e| e.offset);
 
         // Same iter forward and back
         let forward_offsets: Vec<u64> = iter.forward().collect();
@@ -731,7 +723,7 @@ mod test {
 
         // New backward iter, starting at eof
         let backward_offsets: Vec<u64> = log
-            .iter_at_offset(log.end())
+            .bidir_iter_at_offset(log.end())
             .backward()
             .map(|e| e.offset)
             .collect();
