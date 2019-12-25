@@ -14,32 +14,28 @@ Flume is a modular database:
   - each view can build up their own model to represent the data, either to point back to the main source of truth (normalized) or to materialize it (denormalized)
   - each view creates a structure optimized for the queries they provide, they don't need to be durable because they can always rebuild from the main log
 
-TODO diagram
-
-> In flume, each view remembers a version number, and if the version number changes, it just rebuilds the view. This means view code can be easily updated, or new views added. It just rebuilds the view on startup. (though, this may take a few minutes on larger data)
+> In flume, each view remembers a version number, and if the version number changes, it just rebuilds the view. This means view code can be easily updated, or new views added. It just rebuilds the view on startup.
 
 ## Example
 
-TODO
+```rust
+use flumedb::Error;
+use flumedb::OffsetLog;
 
-## Interfaces
+fn main() -> Result<(), Error> {
+    let path = shellexpand::tilde("~/.ssb/flume/log.offset");
+    let log = OffsetLog::<u32>::open_read_only(path.as_ref())?;
 
-### Write-only Log
+    // Read the entry at offset 0
+    let r = log.read(0)?;
+    // `r.data` is a json string in a standard ssb log.
+    // `r.next` is the offset of the next entry.
+    let r = log.read(r.next);
 
-TODO
+    log.iter()
+    .map(|e| serde_json::from_slice::<serde_json::Value>(&e.data).unwrap())
+    .for_each(|v| println!("{}", serde_json::to_string_pretty(&v).unwrap()));
 
-`WriteOnlyLog({}) -> { append, getLatest }`
-
-### Read-only Log
-
-TODO
-
-`ReadOnlyLog({}) -> { append, toIter, ...? }`
-
-### View
-
-TODO
-
-`View({ readOnlyLog }) -> { process, getLatest, ... }`
-
-## [Documentation](http://sunrise-choir.github.io/flumedb-rs/flumedb/)
+    Ok(())
+}
+```
