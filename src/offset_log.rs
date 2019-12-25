@@ -211,12 +211,12 @@ fn size_of_framing_bytes<T>() -> usize {
 pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error> {
     let chunk_size = size_of_framing_bytes::<T>() + item.len();
     dest.reserve(chunk_size);
-    dest.put_u32_be(item.len() as u32);
+    dest.put_u32(item.len() as u32);
     dest.put_slice(&item);
-    dest.put_u32_be(item.len() as u32);
+    dest.put_u32(item.len() as u32);
     let next_offset = offset + chunk_size as u64;
 
-    dest.put_uint_be(next_offset, size_of::<T>());
+    dest.put_uint(next_offset, size_of::<T>());
     Ok(next_offset)
 }
 
