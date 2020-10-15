@@ -8,7 +8,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use serde_cbor::from_slice;
 use serde_cbor::Value as CborValue;
 use serde_json::{json, Value};
-use ssb_multiformats::multihash::{Multihash, Target};
+use ssb_multiformats::multihash::Multihash;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Seek, SeekFrom};
@@ -47,7 +47,7 @@ impl<'a> GoMsgPackKey<'a> {
     pub fn to_legacy_string(&self) -> String {
         let mut arr = [0u8; 32];
         arr.copy_from_slice(&self.hash[..32]);
-        let multi_hash = Multihash::from_sha256(arr, Target::Message);
+        let multi_hash = Multihash::Message(arr);
         multi_hash.to_legacy_string()
     }
 }
