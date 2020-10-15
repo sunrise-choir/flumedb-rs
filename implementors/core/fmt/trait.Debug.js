@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["flumedb"] = [{"text":"impl Debug for FlumeLogError","synthetic":false,"types":[]},{"text":"impl Debug for GoFlumeOffsetLogError","synthetic":false,"types":[]},{"text":"impl Debug for Frame","synthetic":false,"types":[]},{"text":"impl Debug for ReadResult","synthetic":false,"types":[]},{"text":"impl Debug for LogEntry","synthetic":false,"types":[]},{"text":"impl Debug for FlumeOffsetLogError","synthetic":false,"types":[]},{"text":"impl Debug for Frame","synthetic":false,"types":[]},{"text":"impl Debug for ReadResult","synthetic":false,"types":[]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

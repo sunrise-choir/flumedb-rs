@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["FlumeOffsetLogError",""]],"fn":[["encode",""],["read_next",""],["read_next_mut",""],["read_prev",""],["read_prev_mut",""],["validate_entry",""]],"struct":[["Forward",""],["Frame",""],["OffsetLog",""],["OffsetLogIter",""],["ReadResult",""]],"trait":[["BidirIterator",""]]});

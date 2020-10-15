@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["FlumeLogError",""]],"struct":[["Error","The `Error` type, which can contain any failure."],["StreamOpts",""]],"trait":[["FlumeLog",""]],"type":[["Sequence",""]]});
