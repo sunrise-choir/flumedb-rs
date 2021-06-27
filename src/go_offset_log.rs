@@ -216,7 +216,7 @@ where
     // Entry is [payload size: u64, payload ]
 
     let mut buf = Vec::with_capacity(frame.data_size);
-    unsafe { buf.set_len(frame.data_size) };
+    buf.resize(frame.data_size, 0);
 
     let n = read_at(&mut buf, frame.data_start())?;
     if n < frame.data_size {
