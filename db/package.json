@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
-  "license": "ISC",
+  "license": "LGPL-3.0",
   "dependencies": {
     "flumecodec": "0.0.1",
     "flumedb": "^1.0.1",
