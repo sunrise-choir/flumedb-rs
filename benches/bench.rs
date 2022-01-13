@@ -107,23 +107,8 @@ fn offset_log_iter(c: &mut Criterion) {
     c.bench_function("offset log iter forward", move |b| {
         b.iter_batched(
             || log.iter(),
-            |mut iter| {
-                let count = iter.forward().count();
-                assert_eq!(count, offsets.len());
-            },
-            BatchSize::SmallInput,
-        )
-    });
-
-    // Backward
-    let mut log = temp_offset_log();
-    let offsets = log.append_batch(&default_test_bufs()).unwrap();
-
-    c.bench_function("offset log iter backward", move |b| {
-        b.iter_batched(
-            || log.iter_at_offset(log.end()),
-            |mut iter| {
-                let count = iter.backward().count();
+            |iter| {
+                let count = iter.count();
                 assert_eq!(count, offsets.len());
             },
             BatchSize::SmallInput,
@@ -137,9 +122,8 @@ fn offset_log_iter(c: &mut Criterion) {
     c.bench_function("offset log iter forward and json decode", move |b| {
         b.iter_batched(
             || log.iter(),
-            |mut iter| {
+            |iter| {
                 let sum: u64 = iter
-                    .forward()
                     .map(|val| from_slice(&val.data).unwrap())
                     .map(|val: Value| match val["value"] {
                         Value::Number(ref num) => {
