@@ -335,8 +335,7 @@ where
     let tail_size = size_of_frame_tail::<ByteType>();
     let to_read = frame.data_size + tail_size;
 
-    let mut buf = Vec::with_capacity(to_read);
-    unsafe { buf.set_len(to_read) };
+    let mut buf = vec![0; to_read];
 
     let n = read_at(&mut buf, frame.data_start())?;
     if n < to_read {
@@ -353,7 +352,7 @@ where
             offset: frame.offset,
             data: buf,
         },
-        next: next,
+        next,
     })
 }
 
