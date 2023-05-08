@@ -13,12 +13,20 @@ impl MemLog {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MemLogError {
+    #[error("Unable to get sequence: {sequence}")]
+    SequenceNotFound { sequence: u64 },
+}
+
 impl FlumeLog for MemLog {
-    fn get(&self, seq_num: u64) -> Result<Vec<u8>, Error> {
+    type Error = MemLogError;
+
+    fn get(&self, seq_num: u64) -> Result<Vec<u8>, Self::Error> {
         self.log
             .get(seq_num as usize)
             .map(|slice| slice.clone())
-            .ok_or(FlumeLogError::SequenceNotFound { sequence: seq_num }.into())
+            .ok_or(Self::Error::SequenceNotFound { sequence: seq_num }.into())
     }
     fn clear(&mut self, seq: u64) {
         self.log[seq as usize] = Vec::new();
@@ -30,7 +38,7 @@ impl FlumeLog for MemLog {
             Some(self.log.len() as u64 - 1)
         }
     }
-    fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
+    fn append(&mut self, buff: &[u8]) -> Result<u64, Self::Error> {
         let seq = self.log.len();
         let mut vec = Vec::new();
         vec.extend_from_slice(buff);

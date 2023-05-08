@@ -13,13 +13,31 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::path::Path;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum FlumeOffsetLogError {
-    #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
+    #[error("Incorrect framing values detected, log file might be corrupt")]
     CorruptLogFile {},
 
-    #[fail(display = "The decode buffer passed to decode was too small")]
+    #[error("The decode buffer passed to decode was too small")]
     DecodeBufferSizeTooSmall {},
+
+    #[error("Failed to open file: {0}")]
+    OpenFile(#[source] io::Error),
+
+    #[error("Failed to seek file: {0}")]
+    SeekFile(#[source] io::Error),
+
+    #[error("Failed to write file: {0}")]
+    WriteFile(#[source] io::Error),
+
+    #[error("Failed to read at offset: {0}")]
+    ReadAtOffset(#[source] io::Error),
+
+    #[error("Failed to read uint: {0}")]
+    ReadUint(#[source] io::Error),
+
+    #[error("Failed to read u32: {0}")]
+    ReadU32(#[source] io::Error),
 }
 
 pub struct OffsetLog<ByteType> {
@@ -50,24 +68,32 @@ pub struct ReadResult {
 }
 
 impl<ByteType> OffsetLog<ByteType> {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, Error> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, FlumeOffsetLogError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(&path)?;
+            .open(&path)
+            .map_err(FlumeOffsetLogError::OpenFile)?;
 
         OffsetLog::from_file(file)
     }
 
-    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<OffsetLog<ByteType>, Error> {
-        let file = OpenOptions::new().read(true).open(&path)?;
+    pub fn open_read_only<P: AsRef<Path>>(
+        path: P,
+    ) -> Result<OffsetLog<ByteType>, FlumeOffsetLogError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .map_err(FlumeOffsetLogError::OpenFile)?;
 
         OffsetLog::from_file(file)
     }
 
-    pub fn from_file(mut file: File) -> Result<OffsetLog<ByteType>, Error> {
-        let file_length = file.seek(SeekFrom::End(0))?;
+    pub fn from_file(mut file: File) -> Result<OffsetLog<ByteType>, FlumeOffsetLogError> {
+        let file_length = file
+            .seek(SeekFrom::End(0))
+            .map_err(FlumeOffsetLogError::SeekFile)?;
 
         let last_offset = if file_length > 0 {
             let frame = read_prev_frame::<ByteType, _>(file_length, |b, o| file.read_at(b, o))?;
@@ -89,11 +115,14 @@ impl<ByteType> OffsetLog<ByteType> {
         self.end_of_file
     }
 
-    pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
+    pub fn read(&self, offset: u64) -> Result<ReadResult, FlumeOffsetLogError> {
         read_next::<ByteType, _>(offset, &self.file)
     }
 
-    pub fn append_batch<T: AsRef<[u8]>>(&mut self, buffs: &[T]) -> Result<Vec<u64>, Error> {
+    pub fn append_batch<T: AsRef<[u8]>>(
+        &mut self,
+        buffs: &[T],
+    ) -> Result<Vec<u64>, FlumeOffsetLogError> {
         let mut bytes = BytesMut::new();
         let mut offsets = Vec::<u64>::new();
 
@@ -106,7 +135,9 @@ impl<ByteType> OffsetLog<ByteType> {
 
         offsets.last().map(|o| self.last_offset = Some(*o));
 
-        self.file.write_at(&bytes, self.end_of_file)?;
+        self.file
+            .write_at(&bytes, self.end_of_file)
+            .map_err(FlumeOffsetLogError::WriteFile)?;
         self.end_of_file = new_end;
 
         Ok(offsets)
@@ -128,7 +159,9 @@ impl<ByteType> OffsetLog<ByteType> {
 }
 
 impl<ByteType> FlumeLog for OffsetLog<ByteType> {
-    fn get(&self, seq_num: u64) -> Result<Vec<u8>, Error> {
+    type Error = FlumeOffsetLogError;
+
+    fn get(&self, seq_num: u64) -> Result<Vec<u8>, Self::Error> {
         self.read(seq_num).map(|r| r.entry.data)
     }
 
@@ -136,14 +169,16 @@ impl<ByteType> FlumeLog for OffsetLog<ByteType> {
         self.last_offset
     }
 
-    fn append(&mut self, buff: &[u8]) -> Result<u64, Error> {
+    fn append(&mut self, buff: &[u8]) -> Result<u64, Self::Error> {
         self.tmp_buffer.clear();
         self.tmp_buffer
             .reserve(buff.len() + size_of_framing_bytes::<ByteType>());
 
         let offset = self.end_of_file;
         let new_end = encode::<ByteType>(offset, buff, &mut self.tmp_buffer)?;
-        self.file.write_at(&self.tmp_buffer, offset)?;
+        self.file
+            .write_at(&self.tmp_buffer, offset)
+            .map_err(Self::Error::WriteFile)?;
 
         self.end_of_file = new_end;
         self.last_offset = Some(offset);
@@ -208,7 +243,11 @@ fn size_of_framing_bytes<T>() -> usize {
     size_of::<u32>() * 2 + size_of::<T>()
 }
 
-pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, Error> {
+pub fn encode<T>(
+    offset: u64,
+    item: &[u8],
+    dest: &mut BytesMut,
+) -> Result<u64, FlumeOffsetLogError> {
     let chunk_size = size_of_framing_bytes::<T>() + item.len();
     dest.reserve(chunk_size);
     dest.put_u32(item.len() as u32);
@@ -220,18 +259,25 @@ pub fn encode<T>(offset: u64, item: &[u8], dest: &mut BytesMut) -> Result<u64, E
     Ok(next_offset)
 }
 
-pub fn validate_entry<T>(offset: u64, data_size: usize, rest: &[u8]) -> Result<u64, Error> {
+pub fn validate_entry<T>(
+    offset: u64,
+    data_size: usize,
+    rest: &[u8],
+) -> Result<u64, FlumeOffsetLogError> {
     if rest.len() != data_size + size_of_frame_tail::<T>() {
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let sz = (&rest[data_size..]).read_u32::<BigEndian>()? as usize;
+    let sz = (&rest[data_size..])
+        .read_u32::<BigEndian>()
+        .map_err(FlumeOffsetLogError::ReadU32)? as usize;
     if sz != data_size {
         return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
     }
 
-    let next =
-        (&rest[(data_size + size_of::<u32>())..]).read_uint::<BigEndian>(size_of::<T>())? as u64;
+    let next = (&rest[(data_size + size_of::<u32>())..])
+        .read_uint::<BigEndian>(size_of::<T>())
+        .map_err(FlumeOffsetLogError::ReadUint)? as u64;
 
     // `next` should be equal to the offset of the next entry
     // which may or may not be immediately following this one (I suppose)
@@ -241,29 +287,38 @@ pub fn validate_entry<T>(offset: u64, data_size: usize, rest: &[u8]) -> Result<u
     Ok(next)
 }
 
-pub fn read_next<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+pub fn read_next<ByteType, R: OffsetRead>(
+    offset: u64,
+    r: &R,
+) -> Result<ReadResult, FlumeOffsetLogError> {
     read_next_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
 pub fn read_next_mut<ByteType, R: OffsetReadMut>(
     offset: u64,
     r: &mut R,
-) -> Result<ReadResult, Error> {
+) -> Result<ReadResult, FlumeOffsetLogError> {
     read_next_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_prev<ByteType, R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+pub fn read_prev<ByteType, R: OffsetRead>(
+    offset: u64,
+    r: &R,
+) -> Result<ReadResult, FlumeOffsetLogError> {
     read_prev_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
 pub fn read_prev_mut<ByteType, R: OffsetReadMut>(
     offset: u64,
     r: &mut R,
-) -> Result<ReadResult, Error> {
+) -> Result<ReadResult, FlumeOffsetLogError> {
     read_prev_impl::<ByteType, _>(offset, |b, o| r.read_at(b, o))
 }
 
-fn read_next_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+fn read_next_impl<ByteType, F>(
+    offset: u64,
+    mut read_at: F,
+) -> Result<ReadResult, FlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -271,7 +326,10 @@ where
     read_entry::<ByteType, _>(&frame, &mut read_at)
 }
 
-fn read_prev_impl<ByteType, F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+fn read_prev_impl<ByteType, F>(
+    offset: u64,
+    mut read_at: F,
+) -> Result<ReadResult, FlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -279,7 +337,7 @@ where
     read_entry::<ByteType, _>(&frame, &mut read_at)
 }
 
-fn read_next_frame<ByteType, F>(offset: u64, read_at: &mut F) -> Result<Frame, Error>
+fn read_next_frame<ByteType, F>(offset: u64, read_at: &mut F) -> Result<Frame, FlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -288,16 +346,18 @@ where
     const HEAD_SIZE: usize = size_of::<u32>();
 
     let mut head_bytes = [0; HEAD_SIZE];
-    let n = read_at(&mut head_bytes, offset)?;
+    let n = read_at(&mut head_bytes, offset).map_err(FlumeOffsetLogError::ReadAtOffset)?;
     if n < HEAD_SIZE {
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let data_size = (&head_bytes[..]).read_u32::<BigEndian>()? as usize;
+    let data_size = (&head_bytes[..])
+        .read_u32::<BigEndian>()
+        .map_err(FlumeOffsetLogError::ReadU32)? as usize;
     Ok(Frame { offset, data_size })
 }
 
-fn read_prev_frame<ByteType, F>(offset: u64, mut read_at: F) -> Result<Frame, Error>
+fn read_prev_frame<ByteType, F>(offset: u64, mut read_at: F) -> Result<Frame, FlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -309,12 +369,15 @@ where
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let n = read_at(&mut tmp[..tail_size], offset - tail_size as u64)?;
+    let n = read_at(&mut tmp[..tail_size], offset - tail_size as u64)
+        .map_err(FlumeOffsetLogError::ReadAtOffset)?;
     if n < tail_size {
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let data_size = (&tmp[..]).read_u32::<BigEndian>()? as usize;
+    let data_size = (&tmp[..])
+        .read_u32::<BigEndian>()
+        .map_err(FlumeOffsetLogError::ReadAtOffset)? as usize;
     if (data_size as u64) > offset {
         return Err(FlumeOffsetLogError::CorruptLogFile {}.into());
     }
@@ -327,7 +390,10 @@ where
     })
 }
 
-fn read_entry<ByteType, F>(frame: &Frame, read_at: &mut F) -> Result<ReadResult, Error>
+fn read_entry<ByteType, F>(
+    frame: &Frame,
+    read_at: &mut F,
+) -> Result<ReadResult, FlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -337,7 +403,7 @@ where
 
     let mut buf = vec![0; to_read];
 
-    let n = read_at(&mut buf, frame.data_start())?;
+    let n = read_at(&mut buf, frame.data_start()).map_err(FlumeOffsetLogError::ReadAtOffset)?;
     if n < to_read {
         return Err(FlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
@@ -359,6 +425,8 @@ where
 // extern crate tempfile;
 #[cfg(test)]
 mod test {
+    use std::error::Error;
+
     use crate::flume_log::FlumeLog;
     use crate::offset_log::*;
     use bytes::BytesMut;
@@ -533,41 +601,44 @@ mod test {
     }
 
     #[test]
-    fn read_from_a_file() {
-        let log = OffsetLog::<u32>::new("./db/test.offset").unwrap();
+    fn read_from_a_file() -> Result<(), Box<dyn Error>> {
+        let log = OffsetLog::<u32>::new("./db/test.offset")?;
         assert_eq!(log.latest(), Some(207));
 
-        let result = log
-            .get(0)
-            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
-            .map(|val: Value| match val["value"] {
-                Value::Number(ref num) => num.as_u64().unwrap(),
-                _ => panic!(),
-            })
-            .unwrap();
+        let bytes = log.get(0)?;
+
+        let value: Value = from_slice(&bytes)?;
+
+        let result = match value["value"] {
+            Value::Number(ref num) => num.as_u64().unwrap(),
+            _ => panic!(),
+        };
+
         assert_eq!(result, 0);
+        Ok(())
     }
 
     #[test]
-    fn open_read_only() {
-        let mut log = OffsetLog::<u32>::open_read_only("./db/test.offset").unwrap();
+    fn open_read_only() -> Result<(), Box<dyn Error>> {
+        let mut log = OffsetLog::<u32>::open_read_only("./db/test.offset")?;
         assert_eq!(log.latest(), Some(207));
 
-        let result = log
-            .get(0)
-            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
-            .map(|val: Value| match val["value"] {
-                Value::Number(ref num) => num.as_u64().unwrap(),
-                _ => panic!(),
-            })
-            .unwrap();
-        assert_eq!(result, 0);
+        let bytes = log.get(0)?;
 
+        let value: Value = from_slice(&bytes)?;
+
+        let result = match value["value"] {
+            Value::Number(ref num) => num.as_u64().unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(result, 0);
         assert!(log.append(&[1, 2, 3, 4]).is_err());
+        Ok(())
     }
 
     #[test]
-    fn write_to_a_file() -> Result<(), Error> {
+    fn write_to_a_file() -> Result<(), Box<dyn Error>> {
         let test_vec = b"{\"value\": 1}";
 
         let mut log = temp_offset_log();
@@ -589,7 +660,7 @@ mod test {
     }
 
     #[test]
-    fn batch_write_to_a_file() -> Result<(), Error> {
+    fn batch_write_to_a_file() -> Result<(), Box<dyn Error>> {
         let test_vec: &[u8] = b"{\"value\": 1}";
 
         let mut test_vecs = Vec::new();
@@ -599,32 +670,32 @@ mod test {
         }
 
         let mut offset_log = temp_offset_log();
-        let result = offset_log
-            .append_batch(test_vecs.as_slice())
-            .and_then(|sequences| {
-                assert_eq!(sequences.len(), test_vecs.len());
-                assert_eq!(sequences[0], 0);
-                assert_eq!(
-                    sequences[1],
-                    test_vec.len() as u64 + size_of_framing_bytes::<u32>() as u64
-                );
-                offset_log.get(0)
-            })
-            .and_then(|val| from_slice(&val).map_err(|err| err.into()))
-            .map(|val: Value| match val["value"] {
-                Value::Number(ref num) => {
-                    let result = num.as_u64().unwrap();
-                    result
-                }
-                _ => panic!(),
-            })
-            .unwrap();
+        let sequences = offset_log.append_batch(test_vecs.as_slice())?;
+
+        assert_eq!(sequences.len(), test_vecs.len());
+        assert_eq!(sequences[0], 0);
+        assert_eq!(
+            sequences[1],
+            test_vec.len() as u64 + size_of_framing_bytes::<u32>() as u64
+        );
+
+        let bytes = offset_log.get(0)?;
+        let value: Value = from_slice(&bytes)?;
+
+        let result = match value["value"] {
+            Value::Number(ref num) => {
+                let result = num.as_u64().unwrap();
+                result
+            }
+            _ => panic!(),
+        };
+
         assert_eq!(result, 1);
         Ok(())
     }
 
     #[test]
-    fn arbitrary_read_and_write_to_a_file() -> Result<(), Error> {
+    fn arbitrary_read_and_write_to_a_file() -> Result<(), FlumeOffsetLogError> {
         let mut offset_log = temp_offset_log();
 
         let data_to_write = vec![b"{\"value\": 1}", b"{\"value\": 2}", b"{\"value\": 3}"];
@@ -674,7 +745,7 @@ mod test {
     }
 
     #[test]
-    fn bidir_iter() -> Result<(), Error> {
+    fn bidir_iter() -> Result<(), FlumeOffsetLogError> {
         let mut log = temp_offset_log();
         log.append(b"abc")?;
         log.append(b"def")?;
