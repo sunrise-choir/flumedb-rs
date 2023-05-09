@@ -7,15 +7,13 @@ extern crate buffered_offset_reader;
 extern crate byteorder;
 extern crate bytes;
 #[macro_use]
-extern crate failure;
 extern crate log;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde_json;
 extern crate serde_cbor;
+extern crate serde_json;
 extern crate ssb_multiformats;
-
 
 pub mod flume_log;
 pub mod flume_view;

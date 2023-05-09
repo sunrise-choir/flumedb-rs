@@ -14,24 +14,36 @@ use std::io;
 use std::io::{Seek, SeekFrom};
 use std::mem::size_of;
 use std::path::Path;
+use std::str::Utf8Error;
 
 const DATA_FILE_NAME: &str = "data";
 
-#[derive(Debug, Fail)]
+#[derive(Debug, thiserror::Error)]
 pub enum GoFlumeOffsetLogError {
-    #[fail(display = "Incorrect framing values detected, log file might be corrupt")]
+    #[error("Incorrect framing values detected, log file might be corrupt")]
     CorruptLogFile {},
-    #[fail(
-        display = "Incorrect values in journal file. File might be corrupt, or we might need better file locking."
-    )]
+    #[error("Incorrect values in journal file. File might be corrupt, or we might need better file locking.")]
     CorruptJournalFile {},
-    #[fail(display = "Incorrect values in offset file. File might be corrupt.")]
+    #[error("Incorrect values in offset file. File might be corrupt.")]
     CorruptOffsetFile {},
-    #[fail(display = "Unsupported message type in offset log")]
+    #[error("Unsupported message type in offset log")]
     UnsupportedMessageType {},
-
-    #[fail(display = "The decode buffer passed to decode was too small")]
+    #[error("The decode buffer passed to decode was too small")]
     DecodeBufferSizeTooSmall {},
+    #[error("Failed to open file: {0}")]
+    OpenFile(#[source] io::Error),
+    #[error("Failed to seek file: {0}")]
+    Seek(#[source] io::Error),
+    #[error("Failed to read at: {0}")]
+    ReadAt(#[source] io::Error),
+    #[error("Failed to read u64: {0}")]
+    ReadU64(#[source] io::Error),
+    #[error("Failed to parse CBOR from slice: {0}")]
+    CborFromSlice(#[source] serde_cbor::Error),
+    #[error("Failed to parse JSON from str: {0}")]
+    JsonFromStr(#[source] serde_json::Error),
+    #[error("Failed to parse String from UTF-8 bytes: {0}")]
+    StrFromUtf8(#[source] Utf8Error),
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -91,28 +103,34 @@ pub struct ReadResult {
 
 impl GoOffsetLog {
     /// Where path is a path to the directory that contains go log files
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, Error> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, GoFlumeOffsetLogError> {
         let data_file_path = Path::new(path.as_ref()).join(DATA_FILE_NAME);
 
         let data_file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .open(data_file_path)?;
+            .open(data_file_path)
+            .map_err(GoFlumeOffsetLogError::OpenFile)?;
 
         GoOffsetLog::from_files(data_file)
     }
 
     /// Where path is a path to the directory that contains go log files
-    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, Error> {
+    pub fn open_read_only<P: AsRef<Path>>(path: P) -> Result<GoOffsetLog, GoFlumeOffsetLogError> {
         let data_file_path = Path::new(path.as_ref()).join(DATA_FILE_NAME);
-        let file = OpenOptions::new().read(true).open(&data_file_path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&data_file_path)
+            .map_err(GoFlumeOffsetLogError::OpenFile)?;
 
         GoOffsetLog::from_files(file)
     }
 
-    pub fn from_files(mut data_file: File) -> Result<GoOffsetLog, Error> {
-        let file_length = data_file.seek(SeekFrom::End(0))?;
+    pub fn from_files(mut data_file: File) -> Result<GoOffsetLog, GoFlumeOffsetLogError> {
+        let file_length = data_file
+            .seek(SeekFrom::End(0))
+            .map_err(GoFlumeOffsetLogError::Seek)?;
 
         Ok(GoOffsetLog {
             data_file,
@@ -124,11 +142,11 @@ impl GoOffsetLog {
         self.end_of_file
     }
 
-    pub fn read(&self, offset: u64) -> Result<ReadResult, Error> {
+    pub fn read(&self, offset: u64) -> Result<ReadResult, GoFlumeOffsetLogError> {
         read_next::<_>(offset, &self.data_file)
     }
 
-    pub fn append_batch(&mut self, _buffs: &[&[u8]]) -> Result<Vec<u64>, Error> {
+    pub fn append_batch(&mut self, _buffs: &[&[u8]]) -> Result<Vec<u64>, GoFlumeOffsetLogError> {
         unimplemented!()
     }
 
@@ -175,15 +193,18 @@ impl IterAtOffset<GoOffsetLogIter> for GoOffsetLog {
         GoOffsetLogIter::with_starting_offset(self.data_file.try_clone().unwrap(), offset)
     }
 }
-pub fn read_next<R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, Error> {
+pub fn read_next<R: OffsetRead>(offset: u64, r: &R) -> Result<ReadResult, GoFlumeOffsetLogError> {
     read_next_impl::<_>(offset, |b, o| r.read_at(b, o))
 }
 
-pub fn read_next_mut<R: OffsetReadMut>(offset: u64, r: &mut R) -> Result<ReadResult, Error> {
+pub fn read_next_mut<R: OffsetReadMut>(
+    offset: u64,
+    r: &mut R,
+) -> Result<ReadResult, GoFlumeOffsetLogError> {
     read_next_impl::<_>(offset, |b, o| r.read_at(b, o))
 }
 
-fn read_next_impl<F>(offset: u64, mut read_at: F) -> Result<ReadResult, Error>
+fn read_next_impl<F>(offset: u64, mut read_at: F) -> Result<ReadResult, GoFlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -191,7 +212,7 @@ where
     read_entry::<_>(&frame, &mut read_at)
 }
 
-fn read_next_frame<F>(offset: u64, read_at: &mut F) -> Result<Frame, Error>
+fn read_next_frame<F>(offset: u64, read_at: &mut F) -> Result<Frame, GoFlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -200,16 +221,18 @@ where
     const HEAD_SIZE: usize = size_of::<u64>();
 
     let mut head_bytes = [0; HEAD_SIZE];
-    let n = read_at(&mut head_bytes, offset)?;
+    let n = read_at(&mut head_bytes, offset).map_err(GoFlumeOffsetLogError::ReadAt)?;
     if n < HEAD_SIZE {
         return Err(GoFlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
 
-    let data_size = (&head_bytes[..]).read_u64::<BigEndian>()? as usize;
+    let data_size = (&head_bytes[..])
+        .read_u64::<BigEndian>()
+        .map_err(GoFlumeOffsetLogError::ReadU64)? as usize;
     Ok(Frame { offset, data_size })
 }
 
-fn read_entry<F>(frame: &Frame, read_at: &mut F) -> Result<ReadResult, Error>
+fn read_entry<F>(frame: &Frame, read_at: &mut F) -> Result<ReadResult, GoFlumeOffsetLogError>
 where
     F: FnMut(&mut [u8], u64) -> io::Result<usize>,
 {
@@ -217,7 +240,7 @@ where
 
     let mut buf = vec![0; frame.data_size];
 
-    let n = read_at(&mut buf, frame.data_start())?;
+    let n = read_at(&mut buf, frame.data_start()).map_err(GoFlumeOffsetLogError::ReadAt)?;
     if n < frame.data_size {
         return Err(GoFlumeOffsetLogError::DecodeBufferSizeTooSmall {}.into());
     }
@@ -226,14 +249,14 @@ where
         return Err(GoFlumeOffsetLogError::UnsupportedMessageType {}.into());
     }
 
-    let tuple: GoCborTuple = from_slice(&buf[1..])?;
+    let tuple: GoCborTuple = from_slice(&buf[1..]).map_err(GoFlumeOffsetLogError::CborFromSlice)?;
 
     let (_, _, (hash, algo), seq, timestamp, raw) = tuple;
 
     let key = GoMsgPackKey { algo, hash };
 
     let cbor = GoMsgPackData {
-        raw: std::str::from_utf8(raw)?,
+        raw: std::str::from_utf8(raw).map_err(GoFlumeOffsetLogError::StrFromUtf8)?,
         key,
         sequence: seq as u64,
     };
@@ -246,7 +269,7 @@ where
 
     let ssb_message = json!({
         "key": cbor.key.to_legacy_string(),
-        "value": serde_json::from_str::<Value>(&cbor.raw)?,
+        "value": serde_json::from_str::<Value>(&cbor.raw).map_err(GoFlumeOffsetLogError::JsonFromStr)?,
         "timestamp": timestamp as u64
     });
 
